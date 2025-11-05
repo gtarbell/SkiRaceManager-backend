@@ -1,6 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, APIGatewayProxyStructuredResultV2 } from "aws-lambda";
- import { teamsRouter } from "./routes/teams";
-// import { racersRouter } from "./routes/racers";
+import { teamsRouter } from "./routes/teams";
+import { racersRouter } from "./routes/racers";
 //import { rosterRouter } from "./routes/roster";
 import { racesRouter } from "./routes/races"
 // import { startlistRouter } from "./routes/startlist";
@@ -12,9 +12,9 @@ const notFound: Route = async () => ({ statusCode: 404, body: "Not found" });
 const routes: Record<string, Route> = {
    "GET /teams": teamsRouter,
    "GET /teams/{teamId}": teamsRouter,
-//   "POST /teams/{teamId}/racers": racersRouter,
-//   "PATCH /teams/{teamId}/racers/{racerId}": racersRouter,
-//   "DELETE /teams/{teamId}/racers/{racerId}": racersRouter,
+  "POST /teams/{teamId}/racers": racersRouter,
+  "PATCH /teams/{teamId}/racers/{racerId}": racersRouter,
+  "DELETE /teams/{teamId}/racers/{racerId}": racersRouter,
 
   "GET /races": racesRouter,
   "GET /races/{raceId}": racesRouter,
