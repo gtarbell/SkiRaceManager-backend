@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
-import { Backend2Stack } from '../lib/backend2-stack';
+import { SkiApiStack } from '../lib/SkiApiStack'
 
 const app = new cdk.App();
-new Backend2Stack(app, 'Backend2Stack', {
+new SkiApiStack(app, 'SkiApiStack', {
   /* If you don't specify 'env', this stack will be environment-agnostic.
    * Account/Region-dependent features and context lookups will not work,
    * but a single synthesized template can be deployed anywhere. */
