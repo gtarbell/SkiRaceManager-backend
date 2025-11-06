@@ -1,7 +1,8 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
-import { nanoid } from "nanoid";
+//import { nanoid } from "nanoid";
+
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TEAMS = process.env.TEAMS_TABLE!;
@@ -32,13 +33,15 @@ export const racersRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
 
   if (method === "POST" && e.rawPath.endsWith(`/teams/${teamId}/racers`)) {
     const { name, gender, class: racerClass } = body ?? {};
+    const { nanoid } = await import("nanoid"); // ok in CJS build
     const id = nanoid(10);
+    var racer = { racerId: id, teamId, name, gender, class: racerClass };
     await ddb.send(new PutCommand({
       TableName: RACERS,
-      Item: { racerId: id, teamId, name, gender, class: racerClass },
+      Item: racer,
     }));
-    const team = await loadTeamWithRacers(teamId);
-    return { statusCode: 200, body: JSON.stringify(team )};
+    //const team = await loadTeamWithRacers(teamId);
+    return { statusCode: 200, body: JSON.stringify(racer )};
   }
 
   if (method === "PATCH" && racerId) {
@@ -59,8 +62,9 @@ export const racersRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
         ExpressionAttributeValues: values,
       }));
     }
-    const team = await loadTeamWithRacers(teamId);
-    return { statusCode: 200, body: JSON.stringify(team )};
+    var updatedRacer = { racerId: racerId, teamId, name, gender, class: racerClass };
+    //const team = await loadTeamWithRacers(teamId);
+    return { statusCode: 200, body: JSON.stringify(updatedRacer )};
   }
 
   if (method === "DELETE" && racerId) {
@@ -71,9 +75,9 @@ export const racersRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     // (We don't know all raceIds here; in a real app you'd keep a GSI or do a scan with filter. For now, best-effort leave as-is or add a TODO.)
     // TODO: add a GSI on ROSTERS for racerId to delete across races quickly.
 
-    const team = await loadTeamWithRacers(teamId);
-    return { statusCode: 200, body: JSON.stringify(team )};
+    //const team = await loadTeamWithRacers(teamId);
+    return { statusCode: 200, body: "" };
   }
 
-  return { statusCode: 404, body: JSON.stringify({ error: "Not found" } )};
+  return { statusCode: 404, body: JSON.stringify({ error: "Racer Router, Not found - " + method + " " + e.rawPath } )};
 };

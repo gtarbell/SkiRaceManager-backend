@@ -4,7 +4,8 @@ import { AttributeType, BillingMode, Table, ProjectionType } from "aws-cdk-lib/a
 import { Runtime, Code, Function as LambdaFn } from "aws-cdk-lib/aws-lambda";
 import { HttpApi, CorsHttpMethod, HttpMethod, HttpRoute, HttpRouteKey, HttpIntegrationSubtype } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration as V2Integration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-
+import * as path from "path";
+import { NodejsFunction, OutputFormat } from "aws-cdk-lib/aws-lambda-nodejs";
 
 export class SkiApiStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -63,12 +64,57 @@ export class SkiApiStack extends Stack {
     });
 
     // Lambda (monolith handler with tiny router)
-    const apiFn = new LambdaFn(this, "ApiFn", {
+    // const apiFn = new LambdaFn(this, "ApiFn", {
+    //   runtime: Runtime.NODEJS_20_X,
+    //   memorySize: 256,
+    //   timeout: Duration.seconds(10),
+    //   code: Code.fromAsset(".", {
+    //     exclude: [
+    //       "src",
+    //       "lib",
+    //       "scripts",
+    //       ".codesight",
+    //       "cdk.out",
+    //       ".git",
+    //       ".gitignore",
+    //       ".npmignore",
+    //       "README.md",
+    //       "jest.config.js",
+    //       "package-lock.json",
+    //       "package.json",
+    //       "tsconfig.json"
+    //       // add other dev-only files as needed
+    //     ],
+    //   }),
+    //   handler: "dist/index.handler",
+    //   environment: {
+    //     TEAMS_TABLE: teams.tableName,
+    //     RACERS_TABLE: racers.tableName,
+    //     RACES_TABLE: races.tableName,
+    //     ROSTERS_TABLE: rosters.tableName,
+    //     STARTLISTS_TABLE: startLists.tableName,
+    //   },
+    // });
+
+    const apiFn = new NodejsFunction(this, "ApiFn", {
+      // Point this to your TS entry file (the one that exports `handler`)
+      entry: path.join(__dirname, "../src/index.ts"),
+      handler: "handler",                 // named export in index.ts => export const handler = ...
       runtime: Runtime.NODEJS_20_X,
       memorySize: 256,
       timeout: Duration.seconds(10),
-      code: Code.fromAsset("./src/"), // built JS output
-      handler: "index.handler",
+
+      // Bundle everything so no ESM leaks or missing deps at runtime
+      bundling: {
+        format: OutputFormat.CJS,         // emit CommonJS for Lambda
+        target: "node20",
+        minify: true,
+        sourceMap: true,
+        externalModules: [],              // bundle ALL deps (incl. nanoid)
+        // If you want to use a specific tsconfig for the bundle:
+        // tsconfig: path.join(__dirname, "../tsconfig.json"),
+      },
+
       environment: {
         TEAMS_TABLE: teams.tableName,
         RACERS_TABLE: racers.tableName,
@@ -112,6 +158,27 @@ export class SkiApiStack extends Stack {
       path: "/teams/{teamId}",
           integration,
           methods: [HttpMethod.GET]
+    
+    });
+    api.addRoutes(
+    {
+      path: "/teams/{teamId}/racers",
+          integration,
+          methods: [HttpMethod.POST]
+    
+    });
+    api.addRoutes(
+    {
+      path: "/teams/{teamId}/racers/{racerId}",
+          integration,
+          methods: [HttpMethod.PATCH]
+    
+    });
+    api.addRoutes(
+    {
+      path: "/teams/{teamId}/racers/{racerId}",
+          integration,
+          methods: [HttpMethod.DELETE]
     
     });
 

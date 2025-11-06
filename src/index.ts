@@ -10,8 +10,8 @@ type Route = (e: APIGatewayProxyEventV2) => Promise<APIGatewayProxyResultV2>;
 const notFound: Route = async () => ({ statusCode: 404, body: "Not found" });
 
 const routes: Record<string, Route> = {
-   "GET /teams": teamsRouter,
-   "GET /teams/{teamId}": teamsRouter,
+  "GET /teams": teamsRouter,
+  "GET /teams/{teamId}": teamsRouter,
   "POST /teams/{teamId}/racers": racersRouter,
   "PATCH /teams/{teamId}/racers/{racerId}": racersRouter,
   "DELETE /teams/{teamId}/racers/{racerId}": racersRouter,
