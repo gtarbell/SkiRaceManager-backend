@@ -182,6 +182,43 @@ export class SkiApiStack extends Stack {
     
     });
 
+    //--- roster routes
+    api.addRoutes(
+    {
+      path: "/races/{raceId}/roster/{teamId}",
+          integration,
+          methods: [HttpMethod.GET]
+    
+    });
+    api.addRoutes(
+    {
+      path: "/races/{raceId}/roster/{teamId}/add",
+          integration,
+          methods: [HttpMethod.POST]
+    
+    });
+api.addRoutes(
+    {
+      path: "/races/{raceId}/roster/{teamId}/entry/{racerId}",
+          integration,
+          methods: [HttpMethod.PATCH]
+    
+    });
+     api.addRoutes(
+    {
+      path: "/races/{raceId}/roster/{teamId}/move",
+          integration,
+          methods: [HttpMethod.POST]
+    
+    });
+    api.addRoutes(
+    {
+      path: "/races/{raceId}/roster/{teamId}/entry/{racerId}",
+          integration,
+          methods: [HttpMethod.DELETE]
+    
+    });
+
     new CfnOutput(this, "ApiUrl", { value: api.apiEndpoint });
 
     // Output the base URL after deploy
