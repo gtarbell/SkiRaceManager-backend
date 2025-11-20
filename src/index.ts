@@ -1,9 +1,9 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, APIGatewayProxyStructuredResultV2 } from "aws-lambda";
 import { teamsRouter } from "./routes/teams";
 import { racersRouter } from "./routes/racers";
-//import { rosterRouter } from "./routes/roster";
+import { rosterRouter } from "./routes/roster";
 import { racesRouter } from "./routes/races"
-// import { startlistRouter } from "./routes/startlist";
+//import { startlistRouter } from "./routes/startlist";
 
 type Route = (e: APIGatewayProxyEventV2) => Promise<APIGatewayProxyResultV2>;
 
@@ -19,14 +19,14 @@ const routes: Record<string, Route> = {
   "GET /races": racesRouter,
   "GET /races/{raceId}": racesRouter,
 
-//   "GET /races/{raceId}/roster/{teamId}": rosterRouter,
-//   "POST /races/{raceId}/roster/{teamId}/add": rosterRouter,
-//   "PATCH /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
-//   "POST /races/{raceId}/roster/{teamId}/move": rosterRouter,
-//   "DELETE /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
+  "GET /races/{raceId}/roster/{teamId}": rosterRouter,
+  "POST /races/{raceId}/roster/{teamId}/add": rosterRouter,
+  "PATCH /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
+  "POST /races/{raceId}/roster/{teamId}/move": rosterRouter,
+  "DELETE /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
 
-//   "POST /races/{raceId}/start-list/generate": startlistRouter,
-//   "GET /races/{raceId}/start-list": startlistRouter,
+  //"POST /races/{raceId}/start-list/generate": startlistRouter,
+  //"GET /races/{raceId}/start-list": startlistRouter,
 };
 
 function keyOf(e: APIGatewayProxyEventV2) {

@@ -1,4 +1,4 @@
-import { APIGatewayProxyEventV2 } from "aws-lambda";
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -42,7 +42,7 @@ async function countInClass(raceId: string, teamId: string, gender: Gender, cls:
   return (res.Items ?? []).length;
 }
 
-export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
+export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const path = e.rawPath;
   const method = e.requestContext.http.method;
   const params = e.pathParameters || {};
@@ -51,7 +51,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
 
   if (method === "GET") {
     const items = await getRoster(raceId, teamId);
-    return { statusCode: 200, body: items };
+    return { statusCode: 200, body: JSON.stringify(items) };
   }
 
   if (method === "POST" && path.endsWith("/add")) {
@@ -71,9 +71,9 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
 
     // enforce caps
     if (cls === "Varsity" && (await countInClass(raceId, teamId, rGender, "Varsity")) >= CAP.Varsity)
-      return { statusCode: 400, body: { error: `Varsity is capped at 5 for ${rGender}.` } };
+      return { statusCode: 400, body: JSON.stringify({ error: `Varsity is capped at 5 for ${rGender}.` }) };
     if (cls === "Varsity Alternate" && (await countInClass(raceId, teamId, rGender, "Varsity Alternate")) >= CAP["Varsity Alternate"])
-      return { statusCode: 400, body: { error: `Varsity Alternate is capped at 1 for ${rGender}.` } };
+      return { statusCode: 400, body: JSON.stringify({ error: `Varsity Alternate is capped at 1 for ${rGender}.` } )};
 
     // compute next startOrder (max+1 within gender+class)
     const bucket = roster.filter(e => e.gender === rGender && e.class === cls);
@@ -93,7 +93,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
     }));
 
     const items = await getRoster(raceId, teamId);
-    return { statusCode: 200, body: items };
+    return { statusCode: 200, body: JSON.stringify(items )};
   }
 
   if (method === "PATCH") {
@@ -102,17 +102,17 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
     const { newClass } = body as { newClass: RacerClass };
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
-    if (!entry) return { statusCode: 404, body: { error: "Entry not found" } };
+    if (!entry) return { statusCode: 404, body:JSON.stringify( { error: "Entry not found" } )};
 
     if (entry.class !== newClass) {
       // enforce provisional lock + caps
       if (entry.class === "Provisional" && newClass !== "Provisional")
-        return { statusCode: 400, body: { error: "Provisional racers must remain Provisional for all races." } };
+        return { statusCode: 400, body: JSON.stringify({ error: "Provisional racers must remain Provisional for all races." }) };
 
       if (newClass === "Varsity" && (await countInClass(raceId, teamId, entry.gender, "Varsity")) >= CAP.Varsity)
-        return { statusCode: 400, body: { error: `Varsity is capped at 5 for ${entry.gender}.` } };
+        return { statusCode: 400, body: JSON.stringify({ error: `Varsity is capped at 5 for ${entry.gender}.` } )};
       if (newClass === "Varsity Alternate" && (await countInClass(raceId, teamId, entry.gender, "Varsity Alternate")) >= CAP["Varsity Alternate"])
-        return { statusCode: 400, body: { error: `Varsity Alternate is capped at 1 for ${entry.gender}.` } };
+        return { statusCode: 400, body: JSON.stringify({ error: `Varsity Alternate is capped at 1 for ${entry.gender}.` } )};
 
       // delete old + insert new with new start order
       await ddb.send(new DeleteCommand({
@@ -134,31 +134,31 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
       }));
     }
     const items = await getRoster(raceId, teamId);
-    return { statusCode: 200, body: items };
+    return { statusCode: 200, body: JSON.stringify(items) };
   }
 
   if (method === "DELETE") {
     const racerId = e.pathParameters?.["racerId"]!;
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
-    if (!entry) return { statusCode: 200, body: await getRoster(raceId, teamId) };
+    if (!entry) return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
     await ddb.send(new DeleteCommand({
       TableName: ROSTERS,
       Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${String(entry.startOrder).padStart(4, "0")}#${racerId}` },
     }));
-    return { statusCode: 200, body: await getRoster(raceId, teamId) };
+    return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId) )};
   }
 
   if (method === "POST" && path.endsWith("/move")) {
     const { racerId, direction } = JSON.parse(e.body || "{}") as { racerId: string; direction: "up" | "down" };
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
-    if (!entry) return { statusCode: 404, body: { error: "Entry not found" } };
+    if (!entry) return { statusCode: 404, body: JSON.stringify({ error: "Entry not found" } )};
     // swap startOrder within bucket
     const bucket = roster.filter(r => r.gender === entry.gender && r.class === entry.class).sort((a,b)=>a.startOrder-b.startOrder);
     const i = bucket.findIndex(b => b.racerId === racerId);
     if ((direction === "up" && i === 0) || (direction === "down" && i === bucket.length-1))
-      return { statusCode: 200, body: roster };
+      return { statusCode: 200, body: JSON.stringify(roster) };
 
     const swapWith = bucket[direction === "up" ? i - 1 : i + 1];
     // swap by rewriting items (delete+put)
@@ -179,8 +179,8 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2) => {
       }
     }));
 
-    return { statusCode: 200, body: await getRoster(raceId, teamId) };
+    return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId) )};
   }
 
-  return { statusCode: 404, body: { error: "Not found" } };
+  return { statusCode: 404, body: JSON.stringify({ error: "Not found" }) };
 };
