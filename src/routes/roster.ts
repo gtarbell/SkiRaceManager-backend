@@ -83,7 +83,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
       TableName: ROSTERS,
       Item: {
         pk: k(raceId, teamId),
-        sk: `${rGender}#${cls}#${String(startOrder).padStart(4, "0")}#${racerId}`,
+        sk: `${rGender}#${cls}#${raceId}#${racerId}`,
         racerId,
         gender: rGender,
         class: cls,
@@ -117,7 +117,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
       // delete old + insert new with new start order
       await ddb.send(new DeleteCommand({
         TableName: ROSTERS,
-        Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${String(entry.startOrder).padStart(4, "0")}#${racerId}` },
+        Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${racerId}` },
       }));
       const bucket = roster.filter(e => e.gender === entry.gender && e.class === newClass);
       const startOrder = (bucket.length ? Math.max(...bucket.map(b => b.startOrder)) : 0) + 1;
@@ -125,7 +125,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
         TableName: ROSTERS,
         Item: {
           pk: k(raceId, teamId),
-          sk: `${entry.gender}#${newClass}#${String(startOrder).padStart(4, "0")}#${racerId}`,
+          sk: `${entry.gender}#${newClass}#${raceId}#${racerId}`,
           racerId,
           gender: entry.gender,
           class: newClass,
@@ -142,10 +142,30 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
     if (!entry) return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
+    const bucket = roster
+      .filter(r => r.gender === entry.gender && r.class === entry.class)
+      .sort((a, b) => a.startOrder - b.startOrder);
     await ddb.send(new DeleteCommand({
       TableName: ROSTERS,
-      Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${String(entry.startOrder).padStart(4, "0")}#${racerId}` },
+      Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${racerId}` },
     }));
+    const toShift = bucket.filter(r => r.startOrder > entry.startOrder);
+    for (const racer of toShift) {
+      const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+      const newStartOrder = racer.startOrder - 1;
+      const newKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+      await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
+      await ddb.send(new PutCommand({
+        TableName: ROSTERS,
+        Item: {
+          ...newKey,
+          racerId: racer.racerId,
+          gender: racer.gender,
+          class: racer.class,
+          startOrder: newStartOrder,
+        }
+      }));
+    }
     return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId) )};
   }
 
@@ -162,11 +182,13 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
 
     const swapWith = bucket[direction === "up" ? i - 1 : i + 1];
     // swap by rewriting items (delete+put)
-    const keyA = { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${String(entry.startOrder).padStart(4, "0")}#${entry.racerId}` };
-    const keyB = { pk: k(raceId, teamId), sk: `${swapWith.gender}#${swapWith.class}#${String(swapWith.startOrder).padStart(4, "0")}#${swapWith.racerId}` };
+    const keyA = { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${entry.racerId}` };
+    const keyB = { pk: k(raceId, teamId), sk: `${swapWith.gender}#${swapWith.class}#${raceId}#${swapWith.racerId}` };
 
     await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: keyA }));
+    
     await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: keyB }));
+    
 
     await ddb.send(new PutCommand({
       TableName: ROSTERS, Item: {
@@ -180,6 +202,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     }));
 
     return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId) )};
+    //return { statusCode: 200, body: JSON.stringify( {"keyA": keyA, "KeyB": keyB} )};
   }
 
   return { statusCode: 404, body: JSON.stringify({ error: "Not found" }) };
