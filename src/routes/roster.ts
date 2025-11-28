@@ -114,11 +114,32 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
       if (newClass === "Varsity Alternate" && (await countInClass(raceId, teamId, entry.gender, "Varsity Alternate")) >= CAP["Varsity Alternate"])
         return { statusCode: 400, body: JSON.stringify({ error: `Varsity Alternate is capped at 1 for ${entry.gender}.` } )};
 
+      const oldBucket = roster
+        .filter(r => r.gender === entry.gender && r.class === entry.class)
+        .sort((a, b) => a.startOrder - b.startOrder);
       // delete old + insert new with new start order
       await ddb.send(new DeleteCommand({
         TableName: ROSTERS,
         Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${racerId}` },
       }));
+      // Shift startOrder for racers after the moved entry within the old bucket
+      const toShift = oldBucket.filter(r => r.startOrder > entry.startOrder);
+      for (const racer of toShift) {
+        const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+        const newStartOrder = racer.startOrder - 1;
+        const newKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+        await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
+        await ddb.send(new PutCommand({
+          TableName: ROSTERS,
+          Item: {
+            ...newKey,
+            racerId: racer.racerId,
+            gender: racer.gender,
+            class: racer.class,
+            startOrder: newStartOrder,
+          }
+        }));
+      }
       const bucket = roster.filter(e => e.gender === entry.gender && e.class === newClass);
       const startOrder = (bucket.length ? Math.max(...bucket.map(b => b.startOrder)) : 0) + 1;
       await ddb.send(new PutCommand({
