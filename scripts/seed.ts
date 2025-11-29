@@ -15,7 +15,7 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 // ======== DATA (your mock data) ========
 // Minimal types
 type Gender = "Male" | "Female";
-type RacerClass = "Varsity" | "Varsity Alternate" | "Jr Varsity" | "Provisional";
+type RacerClass = "Varsity" | "Varsity Alternate" | "Jr Varsity" | "Provisional" | "DNS";
 
 type User = { id: string; name: string; role: "ADMIN" | "COACH"; teamIds: string[]; };
 type Racer = { id: string; name: string; gender: Gender; class: RacerClass; teamId: string; };
