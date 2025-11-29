@@ -8,7 +8,7 @@ const TEAMS = process.env.TEAMS_TABLE!;
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
-type RacerClass = "Varsity" | "Varsity Alternate" | "Jr Varsity" | "Provisional";
+type RacerClass = "Varsity" | "Varsity Alternate" | "Jr Varsity" | "Provisional" | "DNS";
 type Gender = "Male" | "Female";
 
 const CAP = { Varsity: 5, "Varsity Alternate": 1 };
@@ -21,13 +21,13 @@ async function getRoster(raceId: string, teamId: string) {
     KeyConditionExpression: "pk = :pk",
     ExpressionAttributeValues: { ":pk": k(raceId, teamId) },
   }));
-  // items have sk "<gender>#<class>#<startOrder>#<racerId>"
+  // items have sk "<gender>#<class>#<raceId>#<racerId>"
   return (res.Items ?? []).map(i => ({
     raceId, teamId,
     racerId: i.racerId as string,
     gender: i.gender as Gender,
     class: i.class as RacerClass,
-    startOrder: i.startOrder as number,
+    startOrder: (i.startOrder as number | null) ?? null,
   }));
 }
 
@@ -67,7 +67,9 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     // Find gender/class by reading from existing roster or requiring UI payload:
     const { rGender, rBaseClass } = JSON.parse(e.body || "{}") as { rGender: Gender; rBaseClass: RacerClass };
 
-    const cls: RacerClass = rBaseClass === "Provisional" ? "Provisional" : (desiredClass ?? rBaseClass);
+    const cls: RacerClass = rBaseClass === "Provisional"
+      ? (desiredClass === "DNS" ? "DNS" : "Provisional")
+      : (desiredClass ?? rBaseClass);
 
     // enforce caps
     if (cls === "Varsity" && (await countInClass(raceId, teamId, rGender, "Varsity")) >= CAP.Varsity)
@@ -77,7 +79,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
 
     // compute next startOrder (max+1 within gender+class)
     const bucket = roster.filter(e => e.gender === rGender && e.class === cls);
-    const startOrder = (bucket.length ? Math.max(...bucket.map(b => b.startOrder)) : 0) + 1;
+    const startOrder = cls === "DNS" ? null : (bucket.length ? Math.max(...bucket.map(b => b.startOrder ?? 0)) : 0) + 1;
 
     await ddb.send(new PutCommand({
       TableName: ROSTERS,
@@ -106,7 +108,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
 
     if (entry.class !== newClass) {
       // enforce provisional lock + caps
-      if (entry.class === "Provisional" && newClass !== "Provisional")
+      if (entry.class === "Provisional" && newClass !== "Provisional" && newClass !== "DNS")
         return { statusCode: 400, body: JSON.stringify({ error: "Provisional racers must remain Provisional for all races." }) };
 
       if (newClass === "Varsity" && (await countInClass(raceId, teamId, entry.gender, "Varsity")) >= CAP.Varsity)
@@ -114,34 +116,36 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
       if (newClass === "Varsity Alternate" && (await countInClass(raceId, teamId, entry.gender, "Varsity Alternate")) >= CAP["Varsity Alternate"])
         return { statusCode: 400, body: JSON.stringify({ error: `Varsity Alternate is capped at 1 for ${entry.gender}.` } )};
 
-      const oldBucket = roster
+      const oldBucket = entry.class === "DNS" ? [] : roster
         .filter(r => r.gender === entry.gender && r.class === entry.class)
-        .sort((a, b) => a.startOrder - b.startOrder);
+        .sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
       // delete old + insert new with new start order
       await ddb.send(new DeleteCommand({
         TableName: ROSTERS,
         Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${racerId}` },
       }));
       // Shift startOrder for racers after the moved entry within the old bucket
-      const toShift = oldBucket.filter(r => r.startOrder > entry.startOrder);
-      for (const racer of toShift) {
-        const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
-        const newStartOrder = racer.startOrder - 1;
-        const newKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
-        await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
-        await ddb.send(new PutCommand({
-          TableName: ROSTERS,
-          Item: {
-            ...newKey,
-            racerId: racer.racerId,
-            gender: racer.gender,
-            class: racer.class,
-            startOrder: newStartOrder,
-          }
-        }));
+      if (entry.class !== "DNS") {
+        const toShift = oldBucket.filter(r => (r.startOrder ?? 0) > (entry.startOrder ?? 0));
+        for (const racer of toShift) {
+          const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+          const newStartOrder = (racer.startOrder ?? 0) - 1;
+          const newKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...newKey,
+              racerId: racer.racerId,
+              gender: racer.gender,
+              class: racer.class,
+              startOrder: newStartOrder,
+            }
+          }));
+        }
       }
       const bucket = roster.filter(e => e.gender === entry.gender && e.class === newClass);
-      const startOrder = (bucket.length ? Math.max(...bucket.map(b => b.startOrder)) : 0) + 1;
+      const startOrder = newClass === "DNS" ? null : (bucket.length ? Math.max(...bucket.map(b => b.startOrder ?? 0)) : 0) + 1;
       await ddb.send(new PutCommand({
         TableName: ROSTERS,
         Item: {
@@ -163,29 +167,31 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
     if (!entry) return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
-    const bucket = roster
+    const bucket = entry.class === "DNS" ? [] : roster
       .filter(r => r.gender === entry.gender && r.class === entry.class)
-      .sort((a, b) => a.startOrder - b.startOrder);
+      .sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
     await ddb.send(new DeleteCommand({
       TableName: ROSTERS,
       Key: { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${racerId}` },
     }));
-    const toShift = bucket.filter(r => r.startOrder > entry.startOrder);
-    for (const racer of toShift) {
-      const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
-      const newStartOrder = racer.startOrder - 1;
-      const newKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
-      await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
-      await ddb.send(new PutCommand({
-        TableName: ROSTERS,
-        Item: {
-          ...newKey,
-          racerId: racer.racerId,
-          gender: racer.gender,
-          class: racer.class,
-          startOrder: newStartOrder,
-        }
-      }));
+    if (entry.class !== "DNS") {
+      const toShift = bucket.filter(r => (r.startOrder ?? 0) > (entry.startOrder ?? 0));
+      for (const racer of toShift) {
+        const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+        const newStartOrder = (racer.startOrder ?? 0) - 1;
+        const newKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+        await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
+        await ddb.send(new PutCommand({
+          TableName: ROSTERS,
+          Item: {
+            ...newKey,
+            racerId: racer.racerId,
+            gender: racer.gender,
+            class: racer.class,
+            startOrder: newStartOrder,
+          }
+        }));
+      }
     }
     return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId) )};
   }
@@ -195,6 +201,8 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
     if (!entry) return { statusCode: 404, body: JSON.stringify({ error: "Entry not found" } )};
+    if (entry.class === "DNS")
+      return { statusCode: 400, body: JSON.stringify({ error: "DNS racers are not in the start order." }) };
     // swap startOrder within bucket
     const bucket = roster.filter(r => r.gender === entry.gender && r.class === entry.class).sort((a,b)=>a.startOrder-b.startOrder);
     const i = bucket.findIndex(b => b.racerId === racerId);
