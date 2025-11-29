@@ -204,7 +204,11 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     if (entry.class === "DNS")
       return { statusCode: 400, body: JSON.stringify({ error: "DNS racers are not in the start order." }) };
     // swap startOrder within bucket
-    const bucket = roster.filter(r => r.gender === entry.gender && r.class === entry.class).sort((a,b)=>a.startOrder-b.startOrder);
+    const bucket = roster.filter(r => r.gender === entry.gender && r.class === entry.class);
+    if (bucket.some(r => r.startOrder == null)) {
+      return { statusCode: 500, body: JSON.stringify({ error: "Start order missing for roster entries." }) };
+    }
+    bucket.sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
     const i = bucket.findIndex(b => b.racerId === racerId);
     if ((direction === "up" && i === 0) || (direction === "down" && i === bucket.length-1))
       return { statusCode: 200, body: JSON.stringify(roster) };
@@ -221,12 +225,12 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
 
     await ddb.send(new PutCommand({
       TableName: ROSTERS, Item: {
-        ...keyA, racerId: entry.racerId, gender: entry.gender, class: entry.class, startOrder: swapWith.startOrder
+        ...keyA, racerId: entry.racerId, gender: entry.gender, class: entry.class, startOrder: swapWith.startOrder!
       }
     }));
     await ddb.send(new PutCommand({
       TableName: ROSTERS, Item: {
-        ...keyB, racerId: swapWith.racerId, gender: swapWith.gender, class: swapWith.class, startOrder: entry.startOrder
+        ...keyB, racerId: swapWith.racerId, gender: swapWith.gender, class: swapWith.class, startOrder: entry.startOrder!
       }
     }));
 
