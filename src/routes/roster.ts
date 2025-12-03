@@ -9,6 +9,7 @@ const TEAMS = process.env.TEAMS_TABLE!;
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 type RacerClass = "Varsity" | "Varsity Alternate" | "Jr Varsity" | "Provisional" | "DNS";
+type InputRacerClass = RacerClass | "DNS - Did Not Start";
 type Gender = "Male" | "Female";
 
 const CAP = { Varsity: 5, "Varsity Alternate": 1 };
@@ -55,7 +56,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
   }
 
   if (method === "POST" && path.endsWith("/add")) {
-    const { racerId, desiredClass } = JSON.parse(e.body || "{}") as { racerId: string; desiredClass?: RacerClass };
+    const { racerId, desiredClass } = JSON.parse(e.body || "{}") as { racerId: string; desiredClass?: InputRacerClass };
     // Load racer baseline to enforce Provisional lock
     // (in a real app you'd also enforce coach scope here via auth context)
     const roster = await getRoster(raceId, teamId);
@@ -67,9 +68,11 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     // Find gender/class by reading from existing roster or requiring UI payload:
     const { rGender, rBaseClass } = JSON.parse(e.body || "{}") as { rGender: Gender; rBaseClass: RacerClass };
 
+    const normalizedDesired = desiredClass === "DNS - Did Not Start" ? "DNS" : desiredClass;
+
     const cls: RacerClass = rBaseClass === "Provisional"
-      ? (desiredClass === "DNS" ? "DNS" : "Provisional")
-      : (desiredClass ?? rBaseClass);
+      ? (normalizedDesired === "DNS" ? "DNS" : "Provisional")
+      : (normalizedDesired ?? rBaseClass);
 
     // enforce caps
     if (cls === "Varsity" && (await countInClass(raceId, teamId, rGender, "Varsity")) >= CAP.Varsity)
@@ -101,19 +104,20 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
   if (method === "PATCH") {
     const body = JSON.parse(e.body || "{}");
     const racerId = e.pathParameters?.["racerId"]!;
-    const { newClass } = body as { newClass: RacerClass };
+    const { newClass } = body as { newClass: InputRacerClass };
+    const normalizedNewClass: RacerClass = newClass === "DNS - Did Not Start" ? "DNS" : newClass;
     const roster = await getRoster(raceId, teamId);
     const entry = roster.find(r => r.racerId === racerId);
     if (!entry) return { statusCode: 404, body:JSON.stringify( { error: "Entry not found" } )};
 
-    if (entry.class !== newClass) {
+    if (entry.class !== normalizedNewClass) {
       // enforce provisional lock + caps
-      if (entry.class === "Provisional" && newClass !== "Provisional" && newClass !== "DNS")
+      if (entry.class === "Provisional" && normalizedNewClass !== "Provisional" && normalizedNewClass !== "DNS")
         return { statusCode: 400, body: JSON.stringify({ error: "Provisional racers must remain Provisional for all races." }) };
 
-      if (newClass === "Varsity" && (await countInClass(raceId, teamId, entry.gender, "Varsity")) >= CAP.Varsity)
+      if (normalizedNewClass === "Varsity" && (await countInClass(raceId, teamId, entry.gender, "Varsity")) >= CAP.Varsity)
         return { statusCode: 400, body: JSON.stringify({ error: `Varsity is capped at 5 for ${entry.gender}.` } )};
-      if (newClass === "Varsity Alternate" && (await countInClass(raceId, teamId, entry.gender, "Varsity Alternate")) >= CAP["Varsity Alternate"])
+      if (normalizedNewClass === "Varsity Alternate" && (await countInClass(raceId, teamId, entry.gender, "Varsity Alternate")) >= CAP["Varsity Alternate"])
         return { statusCode: 400, body: JSON.stringify({ error: `Varsity Alternate is capped at 1 for ${entry.gender}.` } )};
 
       const oldBucket = entry.class === "DNS" ? [] : roster
@@ -144,16 +148,16 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
           }));
         }
       }
-      const bucket = roster.filter(e => e.gender === entry.gender && e.class === newClass);
-      const startOrder = newClass === "DNS" ? null : (bucket.length ? Math.max(...bucket.map(b => b.startOrder ?? 0)) : 0) + 1;
+      const bucket = roster.filter(e => e.gender === entry.gender && e.class === normalizedNewClass);
+      const startOrder = normalizedNewClass === "DNS" ? null : (bucket.length ? Math.max(...bucket.map(b => b.startOrder ?? 0)) : 0) + 1;
       await ddb.send(new PutCommand({
         TableName: ROSTERS,
         Item: {
           pk: k(raceId, teamId),
-          sk: `${entry.gender}#${newClass}#${raceId}#${racerId}`,
+          sk: `${entry.gender}#${normalizedNewClass}#${raceId}#${racerId}`,
           racerId,
           gender: entry.gender,
-          class: newClass,
+          class: normalizedNewClass,
           startOrder,
         }
       }));
@@ -203,6 +207,251 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
     if (!entry) return { statusCode: 404, body: JSON.stringify({ error: "Entry not found" } )};
     if (entry.class === "DNS")
       return { statusCode: 400, body: JSON.stringify({ error: "DNS racers are not in the start order." }) };
+
+    const entryKey = { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${entry.racerId}` };
+
+    // Special behavior for Varsity Alternate:
+    // - Up: move to last Varsity spot; if Varsity already has position 5, swap that racer into Varsity Alternate.
+    // - Down: swap with #1 Jr Varsity.
+    if (entry.class === "Varsity Alternate") {
+      const varsity = roster
+        .filter(r => r.gender === entry.gender && r.class === "Varsity" && r.startOrder != null)
+        .sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
+      const jrVarsity = roster
+        .filter(r => r.gender === entry.gender && r.class === "Jr Varsity" && r.startOrder != null)
+        .sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
+
+      if (direction === "up") {
+        const varsityCap = CAP.Varsity;
+        const varsityFifth = varsity.find(v => (v.startOrder ?? 0) === varsityCap);
+
+        // remove current Varsity Alternate entry
+        await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: entryKey }));
+
+        if (varsityFifth) {
+          const fifthKey = { pk: k(raceId, teamId), sk: `${varsityFifth.gender}#${varsityFifth.class}#${raceId}#${varsityFifth.racerId}` };
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: fifthKey }));
+
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...entryKey,
+              sk: `${entry.gender}#Varsity#${raceId}#${entry.racerId}`,
+              racerId: entry.racerId,
+              gender: entry.gender,
+              class: "Varsity",
+              startOrder: varsityCap,
+            }
+          }));
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...fifthKey,
+              sk: `${varsityFifth.gender}#Varsity Alternate#${raceId}#${varsityFifth.racerId}`,
+              racerId: varsityFifth.racerId,
+              gender: varsityFifth.gender,
+              class: "Varsity Alternate",
+              startOrder: entry.startOrder ?? 1,
+            }
+          }));
+        } else {
+          const nextOrder = (varsity.length ? Math.max(...varsity.map(v => v.startOrder ?? 0)) : 0) + 1;
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...entryKey,
+              sk: `${entry.gender}#Varsity#${raceId}#${entry.racerId}`,
+              racerId: entry.racerId,
+              gender: entry.gender,
+              class: "Varsity",
+              startOrder: nextOrder,
+            }
+          }));
+        }
+
+        return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
+      }
+
+      if (direction === "down") {
+        const topJv = jrVarsity.find(j => (j.startOrder ?? 0) === 1);
+        if (!topJv) {
+          // No JV exists; move VA into first JV slot
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: entryKey }));
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...entryKey,
+              sk: `${entry.gender}#Jr Varsity#${raceId}#${entry.racerId}`,
+              racerId: entry.racerId,
+              gender: entry.gender,
+              class: "Jr Varsity",
+              startOrder: 1,
+            }
+          }));
+        } else {
+          const topJvKey = { pk: k(raceId, teamId), sk: `${topJv.gender}#${topJv.class}#${raceId}#${topJv.racerId}` };
+
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: entryKey }));
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: topJvKey }));
+
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...entryKey,
+              sk: `${entry.gender}#Jr Varsity#${raceId}#${entry.racerId}`,
+              racerId: entry.racerId,
+              gender: entry.gender,
+              class: "Jr Varsity",
+              startOrder: 1,
+            }
+          }));
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...topJvKey,
+              sk: `${topJv.gender}#Varsity Alternate#${raceId}#${topJv.racerId}`,
+              racerId: topJv.racerId,
+              gender: topJv.gender,
+              class: "Varsity Alternate",
+              startOrder: entry.startOrder ?? 1,
+            }
+          }));
+        }
+
+        return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
+      }
+    }
+
+    // Special behavior for #1 Jr Varsity moving up: promote to Varsity Alternate (swapping if needed)
+    if (entry.class === "Jr Varsity" && direction === "up" && (entry.startOrder ?? 0) === 1) {
+      const va = roster.find(r => r.gender === entry.gender && r.class === "Varsity Alternate");
+      const jvBucket = roster
+        .filter(r => r.gender === entry.gender && r.class === "Jr Varsity" && r.startOrder != null)
+        .sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
+
+      // Remove JV entry
+      await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: entryKey }));
+
+      // If no existing VA, shift remaining JV start orders down to fill the gap
+      if (!va) {
+        const toShift = jvBucket.filter(r => (r.startOrder ?? 0) > (entry.startOrder ?? 0));
+        for (const racer of toShift) {
+          const oldKey = { pk: k(raceId, teamId), sk: `${racer.gender}#${racer.class}#${raceId}#${racer.racerId}` };
+          const newStartOrder = (racer.startOrder ?? 0) - 1;
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: oldKey }));
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...oldKey,
+              racerId: racer.racerId,
+              gender: racer.gender,
+              class: racer.class,
+              startOrder: newStartOrder,
+            }
+          }));
+        }
+
+        await ddb.send(new PutCommand({
+          TableName: ROSTERS,
+          Item: {
+            ...entryKey,
+            sk: `${entry.gender}#Varsity Alternate#${raceId}#${entry.racerId}`,
+            racerId: entry.racerId,
+            gender: entry.gender,
+            class: "Varsity Alternate",
+            startOrder: 1,
+          }
+        }));
+      } else {
+        // Swap JV #1 with existing VA
+        const vaKey = { pk: k(raceId, teamId), sk: `${va.gender}#${va.class}#${raceId}#${va.racerId}` };
+        await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: vaKey }));
+
+        await ddb.send(new PutCommand({
+          TableName: ROSTERS,
+          Item: {
+            ...entryKey,
+            sk: `${entry.gender}#Varsity Alternate#${raceId}#${entry.racerId}`,
+            racerId: entry.racerId,
+            gender: entry.gender,
+            class: "Varsity Alternate",
+            startOrder: va.startOrder ?? 1,
+          }
+        }));
+        await ddb.send(new PutCommand({
+          TableName: ROSTERS,
+          Item: {
+            ...vaKey,
+            sk: `${va.gender}#Jr Varsity#${raceId}#${va.racerId}`,
+            racerId: va.racerId,
+            gender: va.gender,
+            class: "Jr Varsity",
+            startOrder: entry.startOrder ?? 1,
+          }
+        }));
+      }
+
+      return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
+    }
+
+    // Special behavior: last Varsity moving down swaps/moves into Varsity Alternate
+    if (entry.class === "Varsity" && direction === "down") {
+      const varsityBucket = roster
+        .filter(r => r.gender === entry.gender && r.class === "Varsity" && r.startOrder != null)
+        .sort((a, b) => (a.startOrder ?? 0) - (b.startOrder ?? 0));
+      if (varsityBucket.some(r => r.startOrder == null)) {
+        return { statusCode: 500, body: JSON.stringify({ error: "Start order missing for roster entries." }) };
+      }
+      const lastVarsity = varsityBucket[varsityBucket.length - 1];
+      const isLast = lastVarsity && (entry.startOrder ?? 0) === (lastVarsity.startOrder ?? 0);
+      if (isLast) {
+        const va = roster.find(r => r.gender === entry.gender && r.class === "Varsity Alternate");
+        await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: entryKey }));
+
+        if (va) {
+          const vaKey = { pk: k(raceId, teamId), sk: `${va.gender}#${va.class}#${raceId}#${va.racerId}` };
+          await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: vaKey }));
+
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...entryKey,
+              sk: `${entry.gender}#Varsity Alternate#${raceId}#${entry.racerId}`,
+              racerId: entry.racerId,
+              gender: entry.gender,
+              class: "Varsity Alternate",
+              startOrder: va.startOrder ?? 1,
+            }
+          }));
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...vaKey,
+              sk: `${va.gender}#Varsity#${raceId}#${va.racerId}`,
+              racerId: va.racerId,
+              gender: va.gender,
+              class: "Varsity",
+              startOrder: entry.startOrder ?? (varsityBucket.length || 1),
+            }
+          }));
+        } else {
+          await ddb.send(new PutCommand({
+            TableName: ROSTERS,
+            Item: {
+              ...entryKey,
+              sk: `${entry.gender}#Varsity Alternate#${raceId}#${entry.racerId}`,
+              racerId: entry.racerId,
+              gender: entry.gender,
+              class: "Varsity Alternate",
+              startOrder: 1,
+            }
+          }));
+        }
+
+        return { statusCode: 200, body: JSON.stringify(await getRoster(raceId, teamId)) };
+      }
+    }
+
     // swap startOrder within bucket
     const bucket = roster.filter(r => r.gender === entry.gender && r.class === entry.class);
     if (bucket.some(r => r.startOrder == null)) {
@@ -215,7 +464,7 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
 
     const swapWith = bucket[direction === "up" ? i - 1 : i + 1];
     // swap by rewriting items (delete+put)
-    const keyA = { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${entry.racerId}` };
+    const keyA = entryKey;
     const keyB = { pk: k(raceId, teamId), sk: `${swapWith.gender}#${swapWith.class}#${raceId}#${swapWith.racerId}` };
 
     await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: keyA }));
