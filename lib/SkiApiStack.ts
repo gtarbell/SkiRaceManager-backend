@@ -218,6 +218,13 @@ api.addRoutes(
           methods: [HttpMethod.DELETE]
     
     });
+    api.addRoutes(
+    {
+      path: "/races/{toRaceId}/roster/{teamId}/copy",
+          integration,
+          methods: [HttpMethod.POST]
+    
+    });
 
     new CfnOutput(this, "ApiUrl", { value: api.apiEndpoint });
 

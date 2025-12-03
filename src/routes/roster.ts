@@ -13,6 +13,7 @@ type InputRacerClass = RacerClass | "DNS - Did Not Start";
 type Gender = "Male" | "Female";
 
 const CAP = { Varsity: 5, "Varsity Alternate": 1 };
+const CLASS_ORDER: RacerClass[] = ["Varsity", "Varsity Alternate", "Jr Varsity", "Provisional", "DNS"];
 
 function k(raceId: string, teamId: string) { return `ROSTER#${raceId}#${teamId}`; }
 
@@ -47,12 +48,70 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
   const path = e.rawPath;
   const method = e.requestContext.http.method;
   const params = e.pathParameters || {};
-  const raceId = params["raceId"]!;
-  const teamId = params["teamId"]!;
+  const pathParts = path.split("/").filter(Boolean);
+  const raceId = params["raceId"] ?? pathParts[pathParts.indexOf("races")+1];
+  const teamId = params["teamId"] ?? pathParts[pathParts.indexOf("roster")+1];
+  if (!raceId || !teamId) return { statusCode: 400, body: JSON.stringify({ error: "Missing raceId or teamId" }) };
 
   if (method === "GET") {
     const items = await getRoster(raceId, teamId);
     return { statusCode: 200, body: JSON.stringify(items) };
+  }
+
+  if (method === "POST" && path.endsWith("/copy")) {
+    const { fromRaceId } = JSON.parse(e.body || "{}") as { fromRaceId?: string };
+    if (!fromRaceId) return { statusCode: 400, body: JSON.stringify({ error: "fromRaceId required" }) };
+
+    const source = await getRoster(fromRaceId, teamId);
+    const existingTarget = await getRoster(raceId, teamId);
+
+    for (const entry of existingTarget) {
+      const keyDel = { pk: k(raceId, teamId), sk: `${entry.gender}#${entry.class}#${raceId}#${entry.racerId}` };
+      await ddb.send(new DeleteCommand({ TableName: ROSTERS, Key: keyDel }));
+    }
+
+    const result: typeof source = [];
+    const ordered = source
+      .slice()
+      .sort((a, b) => {
+        if (a.gender !== b.gender) return a.gender.localeCompare(b.gender);
+        const pa = CLASS_ORDER.indexOf(a.class);
+        const pb = CLASS_ORDER.indexOf(b.class);
+        const sa = a.startOrder ?? 0;
+        const sb = b.startOrder ?? 0;
+        return pa === pb ? sa - sb : pa - pb;
+      });
+
+    const countInResult = (gender: Gender, cls: RacerClass) =>
+      result.filter(r => r.gender === gender && r.class === cls).length;
+    const nextStartOrder = (gender: Gender, cls: RacerClass) => {
+      if (cls === "DNS") return null;
+      const max = result
+        .filter(r => r.gender === gender && r.class === cls)
+        .reduce((m, r) => Math.max(m, r.startOrder ?? 0), 0);
+      return max + 1;
+    };
+
+    for (const entry of ordered) {
+      if (entry.class === "DNS") continue; // skip copying DNS entries; they remain eligible but not on roster
+      const cls = entry.class === "Provisional" ? "Provisional" : entry.class;
+      if (cls === "Varsity" && countInResult(entry.gender, "Varsity") >= CAP.Varsity) continue;
+      if (cls === "Varsity Alternate" && countInResult(entry.gender, "Varsity Alternate") >= CAP["Varsity Alternate"]) continue;
+
+      const startOrder = nextStartOrder(entry.gender, cls);
+      const item = {
+        pk: k(raceId, teamId),
+        sk: `${entry.gender}#${cls}#${raceId}#${entry.racerId}`,
+        racerId: entry.racerId,
+        gender: entry.gender,
+        class: cls,
+        startOrder,
+      };
+      await ddb.send(new PutCommand({ TableName: ROSTERS, Item: item }));
+      result.push({ raceId, teamId, racerId: entry.racerId, gender: entry.gender, class: cls, startOrder: startOrder ?? null });
+    }
+
+    return { statusCode: 200, body: JSON.stringify(result) };
   }
 
   if (method === "POST" && path.endsWith("/add")) {

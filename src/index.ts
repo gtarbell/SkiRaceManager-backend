@@ -24,7 +24,7 @@ const routes: Record<string, Route> = {
   "PATCH /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
   "POST /races/{raceId}/roster/{teamId}/move": rosterRouter,
   "DELETE /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
-
+  "POST /races/{raceId}/roster/{teamId}/copy": rosterRouter,
   //"POST /races/{raceId}/start-list/generate": startlistRouter,
   //"GET /races/{raceId}/start-list": startlistRouter,
 };
@@ -39,6 +39,7 @@ function keyOf(e: APIGatewayProxyEventV2) {
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/entry\/[^/]+$/, "/races/{raceId}/roster/{teamId}/entry/{racerId}")
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/move$/, "/races/{raceId}/roster/{teamId}/move")
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/add$/, "/races/{raceId}/roster/{teamId}/add")
+    .replace(/\/races\/[^/]+\/roster\/[^/]+\/copy$/, "/races/{raceId}/roster/{teamId}/copy")
     .replace(/\/races\/[^/]+\/roster\/[^/]+$/, "/races/{raceId}/roster/{teamId}")
     .replace(/\/races\/[^/]+\/start-list\/generate$/, "/races/{raceId}/start-list/generate")
     .replace(/\/races\/[^/]+\/start-list$/, "/races/{raceId}/start-list")
