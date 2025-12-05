@@ -9,7 +9,8 @@
     "seed": "ts-node scripts/seed.ts",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "update-natfis-bibs": "ts-node scripts/updateNatfisBibs.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.922.0",
