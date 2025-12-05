@@ -3,7 +3,7 @@ import { teamsRouter } from "./routes/teams";
 import { racersRouter } from "./routes/racers";
 import { rosterRouter } from "./routes/roster";
 import { racesRouter } from "./routes/races"
-//import { startlistRouter } from "./routes/startlist";
+import { startlistRouter } from "./routes/startlist";
 
 type Route = (e: APIGatewayProxyEventV2) => Promise<APIGatewayProxyResultV2>;
 
@@ -25,8 +25,10 @@ const routes: Record<string, Route> = {
   "POST /races/{raceId}/roster/{teamId}/move": rosterRouter,
   "DELETE /races/{raceId}/roster/{teamId}/entry/{racerId}": rosterRouter,
   "POST /races/{raceId}/roster/{teamId}/copy": rosterRouter,
-  //"POST /races/{raceId}/start-list/generate": startlistRouter,
-  //"GET /races/{raceId}/start-list": startlistRouter,
+  "POST /races/{raceId}/start-list/generate": startlistRouter,
+  "GET /races/{raceId}/start-list": startlistRouter,
+  "GET /races/{raceId}/start-list/excluded": startlistRouter,
+  "POST /races/{raceId}/start-list/excluded": startlistRouter,
 };
 
 function keyOf(e: APIGatewayProxyEventV2) {
@@ -40,6 +42,9 @@ function keyOf(e: APIGatewayProxyEventV2) {
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/move$/, "/races/{raceId}/roster/{teamId}/move")
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/add$/, "/races/{raceId}/roster/{teamId}/add")
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/copy$/, "/races/{raceId}/roster/{teamId}/copy")
+    .replace(/\/races\/[^/]+\/start-list\/generate$/, "/races/{raceId}/start-list/generate")
+    .replace(/\/races\/[^/]+\/start-list\/excluded$/, "/races/{raceId}/start-list/excluded")
+    .replace(/\/races\/[^/]+\/start-list$/, "/races/{raceId}/start-list")
     .replace(/\/races\/[^/]+\/roster\/[^/]+$/, "/races/{raceId}/roster/{teamId}")
     .replace(/\/races\/[^/]+\/start-list\/generate$/, "/races/{raceId}/start-list/generate")
     .replace(/\/races\/[^/]+\/start-list$/, "/races/{raceId}/start-list")
