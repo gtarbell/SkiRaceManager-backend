@@ -63,6 +63,13 @@ export class SkiApiStack extends Stack {
       billingMode: BillingMode.PAY_PER_REQUEST,
     });
 
+    const results = new Table(this, "Results", {
+      tableName: "Results",
+      partitionKey: { name: "raceId", type: AttributeType.STRING },
+      sortKey: { name: "bib", type: AttributeType.NUMBER },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+    });
+
     // Lambda (monolith handler with tiny router)
     // const apiFn = new LambdaFn(this, "ApiFn", {
     //   runtime: Runtime.NODEJS_20_X,
@@ -121,6 +128,7 @@ export class SkiApiStack extends Stack {
         RACES_TABLE: races.tableName,
         ROSTERS_TABLE: rosters.tableName,
         STARTLISTS_TABLE: startLists.tableName,
+        RESULTS_TABLE: results.tableName,
       },
     });
 
@@ -129,6 +137,7 @@ export class SkiApiStack extends Stack {
     races.grantReadWriteData(apiFn);
     rosters.grantReadWriteData(apiFn);
     startLists.grantReadWriteData(apiFn);
+    results.grantReadWriteData(apiFn);
 
     const api = new HttpApi(this, "RaceManagerApi", {
       corsPreflight: {
@@ -230,6 +239,8 @@ api.addRoutes(
     api.addRoutes({ path: "/races/{raceId}/start-list", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.POST] });
+    api.addRoutes({ path: "/races/{raceId}/results", integration, methods: [HttpMethod.GET] });
+    api.addRoutes({ path: "/races/{raceId}/results", integration, methods: [HttpMethod.POST] });
 
     new CfnOutput(this, "ApiUrl", { value: api.apiEndpoint });
 
