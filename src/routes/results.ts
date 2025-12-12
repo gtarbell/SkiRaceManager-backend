@@ -27,6 +27,18 @@ type ParsedEntry = {
   issues?: string[];
 };
 
+type TeamScore = {
+  gender: Gender;
+  teamId: string;
+  teamName: string;
+  run1TotalSec: number | null;
+  run2TotalSec: number | null;
+  totalTimeSec: number | null;
+  run1Contribs: { bib: number; racerName: string; timeSec: number }[];
+  run2Contribs: { bib: number; racerName: string; timeSec: number }[];
+  points: number;
+};
+
 type StartListEntry = {
   racerId: string;
   racerName: string;
@@ -145,7 +157,7 @@ function competitionPoints(finishers: ParsedEntry[], runKey: "run1" | "run2") {
   });
 }
 
-async function saveResults(raceId: string, entries: ParsedEntry[], issues: string[]) {
+async function saveResults(raceId: string, entries: ParsedEntry[], issues: string[], teamScores: TeamScore[]) {
   const existing = await ddb.send(new QueryCommand({
     TableName: RESULTS,
     KeyConditionExpression: "raceId = :r",
@@ -157,7 +169,7 @@ async function saveResults(raceId: string, entries: ParsedEntry[], issues: strin
 
   await ddb.send(new PutCommand({
     TableName: RESULTS,
-    Item: { raceId, bib: 0, generatedAt: new Date().toISOString(), issues },
+    Item: { raceId, bib: 0, generatedAt: new Date().toISOString(), issues, teamScores },
   }));
 
   for (const e of entries) {
@@ -210,7 +222,8 @@ async function loadResults(raceId: string) {
       totalPoints: Number(i.totalPoints ?? 0),
     }))
     .sort((a, b) => b.totalPoints - a.totalPoints || a.bib - b.bib);
-  return { entries, issues: (summary?.issues as string[] | undefined) ?? [] };
+  const teamScores = (summary?.teamScores as TeamScore[] | undefined) ?? [];
+  return { entries, issues: (summary?.issues as string[] | undefined) ?? [], teamScores };
 }
 
 function buildGroups(entries: ParsedEntry[]) {
@@ -262,6 +275,84 @@ function serializeEntries(entries: ParsedEntry[]) {
   }));
 }
 
+function bestThreeSum(times: number[]): number | null {
+  if (times.length < 3) return null;
+  const sorted = times.slice().sort((a, b) => a - b);
+  return sorted[0] + sorted[1] + sorted[2];
+}
+
+function computeTeamScores(entries: ParsedEntry[]): TeamScore[] {
+  const scores: TeamScore[] = [];
+  const genders: Gender[] = ["Female", "Male"];
+  for (const gender of genders) {
+    // teamId -> {run1Times, run2Times, teamName}
+    const byTeam: Record<string, { run1: ParsedEntry[]; run2: ParsedEntry[]; teamName: string }> = {};
+    for (const e of entries) {
+      const cls = e.class === "Varsity Alternate" ? "Varsity" : e.class;
+      if (cls !== "Varsity" || e.gender !== gender) continue;
+      if (!byTeam[e.teamId || ""]) byTeam[e.teamId || ""] = { run1: [], run2: [], teamName: e.teamName };
+      const bucket = byTeam[e.teamId || ""];
+      if (e.run1.status === 1 && typeof e.run1.timeSec === "number") bucket.run1.push(e);
+      if (e.run2.status === 1 && typeof e.run2.timeSec === "number") bucket.run2.push(e);
+      if (!bucket.teamName) bucket.teamName = e.teamName;
+    }
+
+    const eligible: TeamScore[] = [];
+    for (const [teamId, data] of Object.entries(byTeam)) {
+      if (!teamId) continue;
+      const run1Finishers = data.run1
+        .slice()
+        .sort((a, b) => (a.run1.timeSec! - b.run1.timeSec!));
+      const run2Finishers = data.run2
+        .slice()
+        .sort((a, b) => (a.run2.timeSec! - b.run2.timeSec!));
+      const run1Contribs = run1Finishers.slice(0, 3).map(e => ({ bib: e.bib, racerName: e.racerName, timeSec: e.run1.timeSec! }));
+      const run2Contribs = run2Finishers.slice(0, 3).map(e => ({ bib: e.bib, racerName: e.racerName, timeSec: e.run2.timeSec! }));
+      const run1Total = run1Contribs.length === 3 ? run1Contribs.reduce((s, r) => s + r.timeSec, 0) : null;
+      const run2Total = run2Contribs.length === 3 ? run2Contribs.reduce((s, r) => s + r.timeSec, 0) : null;
+      const total = run1Total !== null && run2Total !== null ? run1Total + run2Total : null;
+      eligible.push({
+        gender,
+        teamId,
+        teamName: data.teamName,
+        run1TotalSec: run1Total,
+        run2TotalSec: run2Total,
+        totalTimeSec: total,
+        run1Contribs,
+        run2Contribs,
+        points: 0,
+      });
+    }
+
+    const big = Number.MAX_SAFE_INTEGER;
+    eligible.sort((a, b) => {
+      const aT = a.totalTimeSec ?? big;
+      const bT = b.totalTimeSec ?? big;
+      return aT - bT || a.teamName.localeCompare(b.teamName);
+    });
+
+    let prevTime: number | undefined;
+    let prevRank = 0;
+    const teamCount = eligible.length;
+    let validSeen = 0;
+    eligible.forEach((t) => {
+      if (t.totalTimeSec === null) {
+        t.points = 0;
+        return;
+      }
+      validSeen += 1;
+      const rank = (prevTime !== undefined && t.totalTimeSec === prevTime) ? prevRank : validSeen;
+      const pts = Math.max(0, (teamCount * 2) - (rank - 1) * 2);
+      t.points = pts;
+      prevTime = t.totalTimeSec;
+      prevRank = rank;
+    });
+
+    scores.push(...eligible);
+  }
+  return scores;
+}
+
 export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const raceId = e.pathParameters?.["raceId"];
   if (!raceId) return { statusCode: 400, body: JSON.stringify({ error: "raceId required" }) };
@@ -271,7 +362,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
     const res = await loadResults(raceId);
     const responseEntries = serializeEntries(res.entries);
     const groups = buildGroups(res.entries).map(g => ({ ...g, entries: serializeEntries(g.entries) }));
-    return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues: res.issues, groups }) };
+    return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues: res.issues, groups, teamScores: res.teamScores }) };
   }
 
   if (method === "POST") {
@@ -341,10 +432,11 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
       };
     }).sort((a, b) => b.totalPoints - a.totalPoints || a.bib - b.bib);
 
-    await saveResults(raceId, finalEntries, issues);
+    const teamScores = computeTeamScores(finalEntries);
+    await saveResults(raceId, finalEntries, issues, teamScores);
     const responseEntries = serializeEntries(finalEntries);
     const groups = buildGroups(finalEntries).map(g => ({ ...g, entries: serializeEntries(g.entries) }));
-    return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues, groups }) };
+    return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues, groups, teamScores }) };
   }
 
   return { statusCode: 405, body: JSON.stringify({ error: "Method not allowed" }) };
