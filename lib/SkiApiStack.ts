@@ -159,7 +159,7 @@ export class SkiApiStack extends Stack {
     {
       path: "/races/{raceId}",
           integration,
-          methods: [HttpMethod.GET]
+          methods: [HttpMethod.GET, HttpMethod.PATCH]
     
     });
     api.addRoutes(

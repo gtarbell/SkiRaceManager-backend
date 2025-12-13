@@ -1,10 +1,11 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, PutCommand, DeleteCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 const ROSTERS = process.env.ROSTERS_TABLE!;
 const RACERS = process.env.RACERS_TABLE!;
 const TEAMS = process.env.TEAMS_TABLE!;
+const RACES = process.env.RACES_TABLE!;
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -44,6 +45,11 @@ async function countInClass(raceId: string, teamId: string, gender: Gender, cls:
   return (res.Items ?? []).length;
 }
 
+async function isRaceLocked(raceId: string) {
+  const res = await ddb.send(new GetCommand({ TableName: RACES, Key: { raceId } }));
+  return Boolean(res.Item?.locked);
+}
+
 export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const path = e.rawPath;
   const method = e.requestContext.http.method;
@@ -52,6 +58,13 @@ export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewa
   const raceId = params["raceId"] ?? pathParts[pathParts.indexOf("races")+1];
   const teamId = params["teamId"] ?? pathParts[pathParts.indexOf("roster")+1];
   if (!raceId || !teamId) return { statusCode: 400, body: JSON.stringify({ error: "Missing raceId or teamId" }) };
+
+  if (method !== "GET") {
+    const locked = await isRaceLocked(raceId);
+    if (locked) {
+      return { statusCode: 400, body: JSON.stringify({ error: "Roster is locked for this race." }) };
+    }
+  }
 
   if (method === "GET") {
     const items = await getRoster(raceId, teamId);

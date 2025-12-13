@@ -19,6 +19,7 @@ const routes: Record<string, Route> = {
 
   "GET /races": racesRouter,
   "GET /races/{raceId}": racesRouter,
+  "PATCH /races/{raceId}": racesRouter,
 
   "GET /races/{raceId}/roster/{teamId}": rosterRouter,
   "POST /races/{raceId}/roster/{teamId}/add": rosterRouter,
