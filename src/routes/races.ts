@@ -5,8 +5,8 @@ import { DynamoDBDocumentClient, ScanCommand, GetCommand, UpdateCommand } from "
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const RACES = process.env.RACES_TABLE!;
 
-function normalizeRace<T extends Record<string, any>>(raw: T): T & { locked: boolean } {
-  return { ...raw, locked: Boolean(raw.locked) };
+function normalizeRace<T extends Record<string, any>>(raw: T): T & { locked: boolean; independent: boolean } {
+  return { ...raw, locked: Boolean(raw.locked), independent: Boolean((raw as any).independent) };
 }
 
 function getRaceId(e: APIGatewayProxyEventV2): string | undefined {
@@ -50,18 +50,30 @@ export const racesRouter = async (e: APIGatewayProxyEventV2): Promise<APIGateway
 
   if (method === "PATCH" && raceId) {
     const body = JSON.parse(e.body || "{}");
-    if (typeof body.locked !== "boolean") {
-      return { statusCode: 400, body: JSON.stringify({ error: "locked (boolean) is required" }) };
+    const { locked, independent } = body as { locked?: boolean; independent?: boolean };
+    if (locked === undefined && independent === undefined) {
+      return { statusCode: 400, body: JSON.stringify({ error: "locked or independent is required" }) };
+    }
+    if (locked !== undefined && typeof locked !== "boolean") {
+      return { statusCode: 400, body: JSON.stringify({ error: "locked must be a boolean" }) };
+    }
+    if (independent !== undefined && typeof independent !== "boolean") {
+      return { statusCode: 400, body: JSON.stringify({ error: "independent must be a boolean" }) };
     }
 
     const existing = await ddb.send(new GetCommand({ TableName: RACES, Key: { raceId } }));
     if (!existing.Item) return { statusCode: 404, body: JSON.stringify({ error: "Race not found" }) };
 
+    const updates: string[] = [];
+    const values: Record<string, any> = {};
+    if (locked !== undefined) { updates.push("locked = :l"); values[":l"] = locked; }
+    if (independent !== undefined) { updates.push("independent = :i"); values[":i"] = independent; }
+
     const updated = await ddb.send(new UpdateCommand({
       TableName: RACES,
       Key: { raceId },
-      UpdateExpression: "SET locked = :l",
-      ExpressionAttributeValues: { ":l": body.locked },
+      UpdateExpression: `SET ${updates.join(", ")}`,
+      ExpressionAttributeValues: values,
       ReturnValues: "ALL_NEW",
       ConditionExpression: "attribute_exists(raceId)",
     }));
