@@ -34,6 +34,16 @@ async function getRoster(raceId: string, teamId: string) {
   }));
 }
 
+async function countRosterEntries(raceId: string, teamId: string) {
+  const res = await ddb.send(new QueryCommand({
+    TableName: ROSTERS,
+    KeyConditionExpression: "pk = :pk",
+    ExpressionAttributeValues: { ":pk": k(raceId, teamId) },
+    Select: "COUNT",
+  }));
+  return res.Count ?? 0;
+}
+
 async function countInClass(raceId: string, teamId: string, gender: Gender, cls: RacerClass) {
   const res = await ddb.send(new QueryCommand({
     TableName: ROSTERS,
@@ -53,6 +63,23 @@ async function isRaceLocked(raceId: string) {
 export const rosterRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const path = e.rawPath;
   const method = e.requestContext.http.method;
+  if (method === "POST" && path.endsWith("/races/roster-counts")) {
+    const body = JSON.parse(e.body || "{}") as { raceIds?: string[]; teamIds?: string[] };
+    const raceIds = (body.raceIds ?? []).filter(Boolean);
+    const teamIds = (body.teamIds ?? []).filter(Boolean);
+    if (!raceIds.length || !teamIds.length) {
+      return { statusCode: 400, body: JSON.stringify({ error: "raceIds and teamIds are required" }) };
+    }
+    const counts: Record<string, Record<string, number>> = {};
+    for (const raceId of raceIds) {
+      const perTeam: Record<string, number> = {};
+      for (const teamId of teamIds) {
+        perTeam[teamId] = await countRosterEntries(raceId, teamId);
+      }
+      counts[raceId] = perTeam;
+    }
+    return { statusCode: 200, body: JSON.stringify({ counts }) };
+  }
   const params = e.pathParameters || {};
   const pathParts = path.split("/").filter(Boolean);
   const raceId = params["raceId"] ?? pathParts[pathParts.indexOf("races")+1];

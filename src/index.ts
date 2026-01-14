@@ -9,6 +9,12 @@ import { resultsRouter } from "./routes/results";
 type Route = (e: APIGatewayProxyEventV2) => Promise<APIGatewayProxyResultV2>;
 
 const notFound: Route = async () => ({ statusCode: 404, body: "Not found" });
+const corsHeaders = {
+  "content-type": "application/json",
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "content-type,authorization",
+  "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+};
 
 const routes: Record<string, Route> = {
   "GET /teams": teamsRouter,
@@ -20,6 +26,7 @@ const routes: Record<string, Route> = {
   "GET /races": racesRouter,
   "GET /races/{raceId}": racesRouter,
   "PATCH /races/{raceId}": racesRouter,
+  "POST /races/roster-counts": rosterRouter,
 
   "GET /races/{raceId}/roster/{teamId}": rosterRouter,
   "POST /races/{raceId}/roster/{teamId}/add": rosterRouter,
@@ -47,6 +54,7 @@ function keyOf(e: APIGatewayProxyEventV2) {
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/move$/, "/races/{raceId}/roster/{teamId}/move")
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/add$/, "/races/{raceId}/roster/{teamId}/add")
     .replace(/\/races\/[^/]+\/roster\/[^/]+\/copy$/, "/races/{raceId}/roster/{teamId}/copy")
+    .replace(/\/races\/roster-counts$/, "/races/roster-counts")
     .replace(/\/races\/[^/]+\/start-list\/generate$/, "/races/{raceId}/start-list/generate")
     .replace(/\/races\/[^/]+\/start-list\/excluded$/, "/races/{raceId}/start-list/excluded")
     .replace(/\/races\/[^/]+\/start-list$/, "/races/{raceId}/start-list")
@@ -63,15 +71,18 @@ function keyOf(e: APIGatewayProxyEventV2) {
 
 export const handler = async (e: APIGatewayProxyEventV2) => {
   try {
+    if (e.requestContext.http.method.toUpperCase() === "OPTIONS") {
+      return { statusCode: 200, headers: corsHeaders, body: "" };
+    }
     const k = keyOf(e);
     const fn = routes[k] || notFound;
     const proxyResult = await fn(e) as APIGatewayProxyStructuredResultV2;
     return {
       statusCode: 200,
-      headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+      headers: corsHeaders,
       body: proxyResult.body
     };
   } catch (err: any) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message || "Server error" }) };
+    return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: err.message || "Server error" }) };
   }
 };
