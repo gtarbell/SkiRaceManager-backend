@@ -62,7 +62,7 @@ function keyOf(e: APIGatewayProxyEventV2) {
     .replace(/\/races\/[^/]+\/roster\/[^/]+$/, "/races/{raceId}/roster/{teamId}")
     .replace(/\/races\/[^/]+\/start-list\/generate$/, "/races/{raceId}/start-list/generate")
     .replace(/\/races\/[^/]+\/start-list$/, "/races/{raceId}/start-list")
-    .replace(/\/races\/[^/]+$/, "/races/{raceId}")
+    .replace(/\/races\/(?!roster-counts$)[^/]+$/, "/races/{raceId}")
     .replace(/\/teams\/[^/]+$/, "/teams/{teamId}");
   return `${m} ${norm || "/"}`;
 }
