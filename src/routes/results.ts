@@ -285,13 +285,16 @@ function computeTeamScores(entries: ParsedEntry[]): TeamScore[] {
   const scores: TeamScore[] = [];
   const genders: Gender[] = ["Female", "Male"];
   for (const gender of genders) {
-    // teamId -> {run1Times, run2Times, teamName}
-    const byTeam: Record<string, { run1: ParsedEntry[]; run2: ParsedEntry[]; teamName: string }> = {};
+    // teamId -> {run1Times, run2Times, teamName, racers}
+    const byTeam: Record<string, { run1: ParsedEntry[]; run2: ParsedEntry[]; teamName: string; racers: Set<string> }> = {};
     for (const e of entries) {
       const cls = e.class === "Varsity Alternate" ? "Varsity" : e.class;
       if (cls !== "Varsity" || e.gender !== gender) continue;
-      if (!byTeam[e.teamId || ""]) byTeam[e.teamId || ""] = { run1: [], run2: [], teamName: e.teamName };
+      if (!byTeam[e.teamId || ""]) {
+        byTeam[e.teamId || ""] = { run1: [], run2: [], teamName: e.teamName, racers: new Set() };
+      }
       const bucket = byTeam[e.teamId || ""];
+      bucket.racers.add(e.racerId || String(e.bib));
       if (e.run1.status === 1 && typeof e.run1.timeSec === "number") bucket.run1.push(e);
       if (e.run2.status === 1 && typeof e.run2.timeSec === "number") bucket.run2.push(e);
       if (!bucket.teamName) bucket.teamName = e.teamName;
@@ -333,7 +336,7 @@ function computeTeamScores(entries: ParsedEntry[]): TeamScore[] {
 
     let prevTime: number | undefined;
     let prevRank = 0;
-    const teamCount = eligible.length;
+    const teamCount = eligible.filter(t => byTeam[t.teamId]?.racers.size >= 3).length;
     let validSeen = 0;
     eligible.forEach((t) => {
       if (t.totalTimeSec === null) {
