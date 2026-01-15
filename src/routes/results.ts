@@ -66,7 +66,8 @@ function normalizeClass(cls: string | undefined): RacerClass {
   const c = (cls || "").toLowerCase();
   if (c === "jv" || c.includes("jv") || c.includes("jr")) return "Jr Varsity";
   if (c.startsWith("p")) return "Provisional";
-  if (c === "v" || c === "va" || c.includes("varsity")) return "Varsity";
+  if (c === "va" || c.includes("alternate") || c.includes("alt")) return "Varsity Alternate";
+  if (c === "v" || c.includes("varsity")) return "Varsity";
   return "Unknown";
 }
 
@@ -239,18 +240,20 @@ function buildGroups(entries: ParsedEntry[]) {
     const sorted = list.slice().sort((a, b) => b.totalPoints - a.totalPoints || a.bib - b.bib);
     groups.push({ gender, class: cls, entries: sorted });
   }
-  const rank = (g: Gender, c: RacerClass) => {
-    const isFemale = g === "Female";
-    const isMale = g === "Male";
-    const cls = c === "Varsity Alternate" ? "Varsity" : c;
-    if (isFemale && cls === "Varsity") return 1;
-    if (isMale && cls === "Varsity") return 2;
-    if (isFemale && cls === "Jr Varsity") return 3;
-    if (isMale && cls === "Jr Varsity") return 4;
-    if (isFemale && cls === "Provisional") return 5;
-    if (isMale && cls === "Provisional") return 6;
-    return 999;
-  };
+    const rank = (g: Gender, c: RacerClass) => {
+      const isFemale = g === "Female";
+      const isMale = g === "Male";
+      const cls = c;
+      if (isFemale && cls === "Varsity") return 1;
+      if (isFemale && cls === "Varsity Alternate") return 2;
+      if (isMale && cls === "Varsity") return 3;
+      if (isMale && cls === "Varsity Alternate") return 4;
+      if (isFemale && cls === "Jr Varsity") return 5;
+      if (isMale && cls === "Jr Varsity") return 6;
+      if (isFemale && cls === "Provisional") return 7;
+      if (isMale && cls === "Provisional") return 8;
+      return 999;
+    };
   groups.sort((a, b) => rank(a.gender, a.class) - rank(b.gender, b.class));
   return groups;
 }
@@ -288,8 +291,7 @@ function computeTeamScores(entries: ParsedEntry[]): TeamScore[] {
     // teamId -> {run1Times, run2Times, teamName, racers}
     const byTeam: Record<string, { run1: ParsedEntry[]; run2: ParsedEntry[]; teamName: string; racers: Set<string> }> = {};
     for (const e of entries) {
-      const cls = e.class === "Varsity Alternate" ? "Varsity" : e.class;
-      if (cls !== "Varsity" || e.gender !== gender) continue;
+      if (e.class !== "Varsity" || e.gender !== gender) continue;
       if (!byTeam[e.teamId || ""]) {
         byTeam[e.teamId || ""] = { run1: [], run2: [], teamName: e.teamName, racers: new Set() };
       }
@@ -392,7 +394,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
       if (normFile && normStart && normFile !== normStart) {
         issues.push(`Bib ${p.bib} name mismatch: file "${p.racerName}" vs start list "${sl.racerName}"`);
       }
-      const cls = sl.class === "Varsity" || sl.class === "Varsity Alternate" ? "Varsity" : sl.class;
+      const cls = sl.class;
       return {
         ...p,
         raceId,
@@ -407,8 +409,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
 
     const groupMap = new Map<string, ParsedEntry[]>();
     for (const entry of merged) {
-      const baseClass = entry.class === "Varsity Alternate" ? "Varsity" : normalizeClass(entry.class);
-      const cls = baseClass === "Unknown" ? "Unknown" : baseClass;
+      const cls = normalizeClass(entry.class);
       const g = entry.gender;
       const key = `${g}|${cls}`;
       if (!groupMap.has(key)) groupMap.set(key, []);
@@ -422,8 +423,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
     }
 
     const finalEntries = merged.map(e => {
-      const baseClass = e.class === "Varsity Alternate" ? "Varsity" : normalizeClass(e.class);
-      const cls = baseClass === "Unknown" ? "Unknown" : baseClass;
+      const cls = normalizeClass(e.class);
       const gender = e.gender;
       const list = groupMap.get(`${gender}|${cls}`) || [];
       const updated = list.find(x => x.bib === e.bib) || e;
