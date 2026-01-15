@@ -71,6 +71,11 @@ function normalizeClass(cls: string | undefined): RacerClass {
   return "Unknown";
 }
 
+function scoringClass(cls: string | undefined): RacerClass {
+  const normalized = normalizeClass(cls);
+  return normalized === "Varsity Alternate" ? "Varsity" : normalized;
+}
+
 function normalizeGender(g: string | undefined): Gender {
   if (!g) return "Unknown";
   const val = g.toLowerCase();
@@ -231,29 +236,28 @@ function buildGroups(entries: ParsedEntry[]) {
   const groups: { gender: Gender; class: RacerClass; entries: ParsedEntry[] }[] = [];
   const byKey = new Map<string, ParsedEntry[]>();
   for (const entry of entries) {
-    const key = `${entry.gender}|${entry.class}`;
+    const cls = scoringClass(entry.class);
+    const key = `${entry.gender}|${cls}`;
     if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key)!.push(entry);
+    byKey.get(key)!.push({ ...entry, class: cls });
   }
   for (const [key, list] of byKey) {
     const [gender, cls] = key.split("|") as [Gender, RacerClass];
     const sorted = list.slice().sort((a, b) => b.totalPoints - a.totalPoints || a.bib - b.bib);
     groups.push({ gender, class: cls, entries: sorted });
   }
-    const rank = (g: Gender, c: RacerClass) => {
-      const isFemale = g === "Female";
-      const isMale = g === "Male";
-      const cls = c;
-      if (isFemale && cls === "Varsity") return 1;
-      if (isFemale && cls === "Varsity Alternate") return 2;
-      if (isMale && cls === "Varsity") return 3;
-      if (isMale && cls === "Varsity Alternate") return 4;
-      if (isFemale && cls === "Jr Varsity") return 5;
-      if (isMale && cls === "Jr Varsity") return 6;
-      if (isFemale && cls === "Provisional") return 7;
-      if (isMale && cls === "Provisional") return 8;
-      return 999;
-    };
+  const rank = (g: Gender, c: RacerClass) => {
+    const isFemale = g === "Female";
+    const isMale = g === "Male";
+    const cls = scoringClass(c);
+    if (isFemale && cls === "Varsity") return 1;
+    if (isMale && cls === "Varsity") return 2;
+    if (isFemale && cls === "Jr Varsity") return 3;
+    if (isMale && cls === "Jr Varsity") return 4;
+    if (isFemale && cls === "Provisional") return 5;
+    if (isMale && cls === "Provisional") return 6;
+    return 999;
+  };
   groups.sort((a, b) => rank(a.gender, a.class) - rank(b.gender, b.class));
   return groups;
 }
@@ -409,7 +413,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
 
     const groupMap = new Map<string, ParsedEntry[]>();
     for (const entry of merged) {
-      const cls = normalizeClass(entry.class);
+      const cls = scoringClass(entry.class);
       const g = entry.gender;
       const key = `${g}|${cls}`;
       if (!groupMap.has(key)) groupMap.set(key, []);
@@ -423,13 +427,13 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
     }
 
     const finalEntries = merged.map(e => {
-      const cls = normalizeClass(e.class);
+      const cls = scoringClass(e.class);
       const gender = e.gender;
       const list = groupMap.get(`${gender}|${cls}`) || [];
       const updated = list.find(x => x.bib === e.bib) || e;
       return {
         ...updated,
-        class: cls as RacerClass,
+        class: normalizeClass(e.class) as RacerClass,
         gender,
         totalPoints: (updated.run1Points || 0) + (updated.run2Points || 0),
       };
