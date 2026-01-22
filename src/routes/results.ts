@@ -1,6 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, DeleteCommand, PutCommand, QueryCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 
 type Gender = "Male" | "Female" | "Unknown";
 type RacerClass = "Varsity" | "Varsity Alternate" | "Jr Varsity" | "Provisional" | "Unknown";
@@ -54,6 +54,7 @@ const ladder = [100, 80, 60, 50, 45, 40, 36, 32, 29, 26, 24, 22, 20, 18, 16, 15,
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const STARTLISTS = process.env.STARTLISTS_TABLE!;
 const RESULTS = process.env.RESULTS_TABLE!;
+const TEAMS = process.env.TEAMS_TABLE!;
 
 function normalizeName(name: string): string {
   const raw = name.trim();
@@ -114,6 +115,28 @@ async function getStartList(raceId: string): Promise<StartListEntry[]> {
       class: normalizeClass(String(i.class)),
       bib: Number(i.bib),
     }));
+}
+
+async function getNonLeagueTeamIds(teamIds: string[]): Promise<Set<string>> {
+  const unique = Array.from(new Set(teamIds.filter(Boolean)));
+  const nonLeague = new Set<string>();
+  const chunkSize = 100;
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    const res = await ddb.send(new BatchGetCommand({
+      RequestItems: {
+        [TEAMS]: {
+          Keys: chunk.map(teamId => ({ teamId })),
+          ProjectionExpression: "teamId, nonLeague",
+        },
+      },
+    }));
+    const items = res.Responses?.[TEAMS] ?? [];
+    for (const item of items) {
+      if (item?.nonLeague) nonLeague.add(String(item.teamId));
+    }
+  }
+  return nonLeague;
 }
 
 function parseComps(xml: string, fallbackGender: Gender): ParsedEntry[] {
@@ -369,8 +392,12 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
 
   if (method === "GET") {
     const res = await loadResults(raceId);
+    const nonLeagueTeamIds = await getNonLeagueTeamIds(
+      res.entries.map(e => e.teamId || "")
+    );
+    const scoringEntries = res.entries.filter(e => !nonLeagueTeamIds.has(e.teamId || ""));
     const responseEntries = serializeEntries(res.entries);
-    const groups = buildGroups(res.entries).map(g => ({ ...g, entries: serializeEntries(g.entries) }));
+    const groups = buildGroups(scoringEntries).map(g => ({ ...g, entries: serializeEntries(g.entries) }));
     return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues: res.issues, groups, teamScores: res.teamScores }) };
   }
 
@@ -382,6 +409,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
     const startList = await getStartList(raceId);
     const byBib = new Map<number, StartListEntry>();
     startList.forEach(e => byBib.set(e.bib, e));
+    const nonLeagueTeamIds = await getNonLeagueTeamIds(startList.map(e => e.teamId));
 
     const fallbackGender = normalizeGender(xml.match(/<CurrentSex>([^<]+)<\/CurrentSex>/)?.[1]);
     const parsed = parseComps(xml, fallbackGender);
@@ -413,6 +441,7 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
 
     const groupMap = new Map<string, ParsedEntry[]>();
     for (const entry of merged) {
+      if (nonLeagueTeamIds.has(entry.teamId || "")) continue;
       const cls = scoringClass(entry.class);
       const g = entry.gender;
       const key = `${g}|${cls}`;
@@ -439,10 +468,11 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
       };
     }).sort((a, b) => b.totalPoints - a.totalPoints || a.bib - b.bib);
 
-    const teamScores = computeTeamScores(finalEntries);
+    const teamScores = computeTeamScores(finalEntries.filter(e => !nonLeagueTeamIds.has(e.teamId || "")));
     await saveResults(raceId, finalEntries, issues, teamScores);
     const responseEntries = serializeEntries(finalEntries);
-    const groups = buildGroups(finalEntries).map(g => ({ ...g, entries: serializeEntries(g.entries) }));
+    const groups = buildGroups(finalEntries.filter(e => !nonLeagueTeamIds.has(e.teamId || "")))
+      .map(g => ({ ...g, entries: serializeEntries(g.entries) }));
     return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues, groups, teamScores }) };
   }
 

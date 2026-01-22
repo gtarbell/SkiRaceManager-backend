@@ -166,7 +166,7 @@ export class SkiApiStack extends Stack {
     {
       path: "/teams/{teamId}",
           integration,
-          methods: [HttpMethod.GET]
+          methods: [HttpMethod.GET, HttpMethod.PATCH]
     
     });
     api.addRoutes(

@@ -19,6 +19,7 @@ const corsHeaders = {
 const routes: Record<string, Route> = {
   "GET /teams": teamsRouter,
   "GET /teams/{teamId}": teamsRouter,
+  "PATCH /teams/{teamId}": teamsRouter,
   "POST /teams/{teamId}/racers": racersRouter,
   "PATCH /teams/{teamId}/racers/{racerId}": racersRouter,
   "DELETE /teams/{teamId}/racers/{racerId}": racersRouter,

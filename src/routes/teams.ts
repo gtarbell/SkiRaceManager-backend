@@ -1,6 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, ScanCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, ScanCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TEAMS = process.env.TEAMS_TABLE!;
@@ -27,6 +27,7 @@ export const teamsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGateway
   const method = e.requestContext.http.method;
   const params = e.pathParameters ?? {};
   const teamId = params["teamId"];
+  const body = e.body ? JSON.parse(e.body) : null;
 
   if (method === "GET" && !teamId) {
     // Optional filter: /teams?ids=a,b,c
@@ -46,6 +47,35 @@ export const teamsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGateway
     const t = await getTeam(teamId);
     if (!t) return { statusCode: 404, body: JSON.stringify({ error: "Team not found" } )};
     return { statusCode: 200, body: JSON.stringify(t) };
+  }
+
+  if (method === "PATCH" && teamId) {
+    const { nonLeague } = body ?? {};
+    const expr: string[] = [];
+    const names: Record<string, string> = {};
+    const values: Record<string, any> = {};
+
+    if (nonLeague !== undefined) {
+      expr.push("#nl = :nl");
+      names["#nl"] = "nonLeague";
+      values[":nl"] = !!nonLeague;
+    }
+
+    if (!expr.length) {
+      return { statusCode: 400, body: JSON.stringify({ error: "No supported fields to update" }) };
+    }
+
+    await ddb.send(new UpdateCommand({
+      TableName: TEAMS,
+      Key: { teamId },
+      UpdateExpression: "SET " + expr.join(", "),
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    }));
+
+    const updated = await getTeam(teamId);
+    if (!updated) return { statusCode: 404, body: JSON.stringify({ error: "Team not found" }) };
+    return { statusCode: 200, body: JSON.stringify(updated) };
   }
 
   return { statusCode: 404, body: JSON.stringify({ error: "Not found" }) };
