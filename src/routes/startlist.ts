@@ -85,6 +85,31 @@ async function getExcludedBibs(raceId: string): Promise<number[]> {
   return (res.Item?.excludedBibs as number[] | undefined) ?? [];
 }
 
+async function getStartListData(raceId: string): Promise<{ entries: StartListEntry[]; meta?: StartListMeta; excludedBibs: number[] }> {
+  const res = await ddb.send(new QueryCommand({
+    TableName: STARTLISTS,
+    KeyConditionExpression: "raceId = :r",
+    ExpressionAttributeValues: { ":r": raceId },
+  }));
+  const metaItem = (res.Items ?? []).find(i => i.bib === 0);
+  const meta: StartListMeta | undefined = metaItem?.meta as any;
+  const excludedBibs = (metaItem?.excludedBibs as number[] | undefined) ?? [];
+  const entries: StartListEntry[] = (res.Items ?? [])
+    .filter(i => i.bib !== 0)
+    .map(i => ({
+      raceId,
+      racerId: i.racerId,
+      racerName: i.racerName,
+      teamId: i.teamId,
+      teamName: i.teamName,
+      gender: i.gender,
+      class: i.class,
+      bib: i.bib,
+    }))
+    .sort((a, b) => a.bib - b.bib);
+  return { entries, meta, excludedBibs };
+}
+
 async function getMeta(raceId: string): Promise<{ excludedBibs: number[]; meta?: StartListMeta } | null> {
   const res = await ddb.send(new GetCommand({
     TableName: STARTLISTS,
@@ -129,27 +154,50 @@ export const startlistRouter = async (e: APIGatewayProxyEventV2): Promise<APIGat
   }
 
   if (method === "GET") {
-    const res = await ddb.send(new QueryCommand({
+    const res = await getStartListData(raceId);
+    return { statusCode: 200, body: JSON.stringify({ entries: res.entries, meta: res.meta }) };
+  }
+
+  if (method === "POST" && e.rawPath.endsWith("/copy")) {
+    const body = JSON.parse(e.body || "{}");
+    const fromRaceId = String(body.fromRaceId || "");
+    if (!fromRaceId) return { statusCode: 400, body: JSON.stringify({ error: "fromRaceId required" }) };
+    if (fromRaceId === raceId) return { statusCode: 400, body: JSON.stringify({ error: "Choose a different race to copy from" }) };
+
+    const source = await getStartListData(fromRaceId);
+    if (!source.entries.length && (!source.meta || source.excludedBibs.length === 0)) {
+      return { statusCode: 404, body: JSON.stringify({ error: "Source start list not found" }) };
+    }
+
+    await deleteExistingStartList(raceId);
+
+    await ddb.send(new PutCommand({
       TableName: STARTLISTS,
-      KeyConditionExpression: "raceId = :r",
-      ExpressionAttributeValues: { ":r": raceId },
-    }));
-    const metaItem = (res.Items ?? []).find(i => i.bib === 0);
-    const meta: StartListMeta | undefined = metaItem?.meta as any;
-    const entries: StartListEntry[] = (res.Items ?? [])
-      .filter(i => i.bib !== 0)
-      .map(i => ({
+      Item: {
         raceId,
-        racerId: i.racerId,
-        racerName: i.racerName,
-        teamId: i.teamId,
-        teamName: i.teamName,
-        gender: i.gender,
-        class: i.class,
-        bib: i.bib,
-      }))
-      .sort((a, b) => a.bib - b.bib);
-    return { statusCode: 200, body: JSON.stringify({ entries, meta }) };
+        bib: 0,
+        excludedBibs: source.excludedBibs,
+        ...(source.meta ? { meta: source.meta } : {}),
+      },
+    }));
+
+    for (const entry of source.entries) {
+      await ddb.send(new PutCommand({
+        TableName: STARTLISTS,
+        Item: {
+          raceId,
+          bib: entry.bib,
+          racerId: entry.racerId,
+          racerName: entry.racerName,
+          teamId: entry.teamId,
+          teamName: entry.teamName,
+          gender: entry.gender,
+          class: entry.class,
+        },
+      }));
+    }
+
+    return { statusCode: 200, body: JSON.stringify({ entries: source.entries, meta: source.meta }) };
   }
 
   if (method === "POST" && e.rawPath.endsWith("/generate")) {

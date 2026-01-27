@@ -157,9 +157,16 @@ export class SkiApiStack extends Stack {
     // });
     api.addRoutes(
     {
+      path: "/races",
+          integration,
+          methods: [HttpMethod.GET, HttpMethod.POST]
+    
+    });
+    api.addRoutes(
+    {
       path: "/races/{raceId}",
           integration,
-          methods: [HttpMethod.GET, HttpMethod.PATCH]
+          methods: [HttpMethod.GET, HttpMethod.PATCH, HttpMethod.DELETE]
     
     });
     api.addRoutes(
@@ -236,6 +243,7 @@ api.addRoutes(
     });
     // start list routes
     api.addRoutes({ path: "/races/{raceId}/start-list/generate", integration, methods: [HttpMethod.POST] });
+    api.addRoutes({ path: "/races/{raceId}/start-list/copy", integration, methods: [HttpMethod.POST] });
     api.addRoutes({ path: "/races/{raceId}/start-list", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.POST] });
