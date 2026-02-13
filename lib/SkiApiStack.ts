@@ -249,6 +249,7 @@ api.addRoutes(
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.POST] });
     api.addRoutes({ path: "/races/{raceId}/results", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/results", integration, methods: [HttpMethod.POST] });
+    api.addRoutes({ path: "/races/{raceId}/results/recalc", integration, methods: [HttpMethod.POST] });
 
     new CfnOutput(this, "ApiUrl", { value: api.apiEndpoint });
 

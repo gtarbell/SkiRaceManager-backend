@@ -255,6 +255,38 @@ async function loadResults(raceId: string) {
   return { entries, issues: (summary?.issues as string[] | undefined) ?? [], teamScores };
 }
 
+function toParsedEntry(entry: {
+  raceId: string;
+  bib: number;
+  racerId?: string;
+  racerName: string;
+  teamId?: string;
+  teamName: string;
+  gender: Gender | "Unknown";
+  class: RacerClass | "Unknown";
+  run1: RunInfo;
+  run2: RunInfo;
+  run1Points: number;
+  run2Points: number;
+  totalPoints: number;
+}): ParsedEntry {
+  return {
+    raceId: entry.raceId,
+    bib: entry.bib,
+    racerId: entry.racerId,
+    racerName: entry.racerName,
+    teamId: entry.teamId,
+    teamName: entry.teamName,
+    gender: entry.gender as Gender,
+    class: entry.class as RacerClass,
+    run1: { status: entry.run1.status, timeSec: entry.run1.timeSec },
+    run2: { status: entry.run2.status, timeSec: entry.run2.timeSec },
+    run1Points: entry.run1Points,
+    run2Points: entry.run2Points,
+    totalPoints: entry.totalPoints,
+  };
+}
+
 function buildGroups(entries: ParsedEntry[]) {
   const groups: { gender: Gender; class: RacerClass; entries: ParsedEntry[] }[] = [];
   const byKey = new Map<string, ParsedEntry[]>();
@@ -399,6 +431,34 @@ export const resultsRouter = async (e: APIGatewayProxyEventV2): Promise<APIGatew
     const responseEntries = serializeEntries(res.entries);
     const groups = buildGroups(scoringEntries).map(g => ({ ...g, entries: serializeEntries(g.entries) }));
     return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues: res.issues, groups, teamScores: res.teamScores }) };
+  }
+
+  if (method === "POST" && e.rawPath.endsWith("/recalc")) {
+    const res = await loadResults(raceId);
+    if (!res.entries.length) {
+      return { statusCode: 400, body: JSON.stringify({ error: "No results found for this race" }) };
+    }
+    const nonLeagueTeamIds = await getNonLeagueTeamIds(
+      res.entries.map(e => e.teamId || "")
+    );
+    const parsed = res.entries.map(toParsedEntry);
+    const teamScores = computeTeamScores(parsed.filter(e => !nonLeagueTeamIds.has(e.teamId || "")));
+
+    await ddb.send(new PutCommand({
+      TableName: RESULTS,
+      Item: {
+        raceId,
+        bib: 0,
+        generatedAt: new Date().toISOString(),
+        issues: res.issues,
+        teamScores,
+      },
+    }));
+
+    const responseEntries = serializeEntries(res.entries);
+    const groups = buildGroups(parsed.filter(e => !nonLeagueTeamIds.has(e.teamId || "")))
+      .map(g => ({ ...g, entries: serializeEntries(g.entries) }));
+    return { statusCode: 200, body: JSON.stringify({ entries: responseEntries, issues: res.issues, groups, teamScores }) };
   }
 
   if (method === "POST") {
