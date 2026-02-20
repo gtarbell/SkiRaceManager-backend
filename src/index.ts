@@ -42,6 +42,7 @@ const routes: Record<string, Route> = {
   "GET /races/{raceId}/start-list": startlistRouter,
   "GET /races/{raceId}/start-list/excluded": startlistRouter,
   "POST /races/{raceId}/start-list/excluded": startlistRouter,
+  "PATCH /races/{raceId}/start-list/bib": startlistRouter,
 
   "GET /races/{raceId}/results": resultsRouter,
   "POST /races/{raceId}/results": resultsRouter,
@@ -63,6 +64,7 @@ function keyOf(e: APIGatewayProxyEventV2) {
     .replace(/\/races\/[^/]+\/start-list\/generate$/, "/races/{raceId}/start-list/generate")
     .replace(/\/races\/[^/]+\/start-list\/copy$/, "/races/{raceId}/start-list/copy")
     .replace(/\/races\/[^/]+\/start-list\/excluded$/, "/races/{raceId}/start-list/excluded")
+    .replace(/\/races\/[^/]+\/start-list\/bib$/, "/races/{raceId}/start-list/bib")
     .replace(/\/races\/[^/]+\/start-list$/, "/races/{raceId}/start-list")
     .replace(/\/races\/[^/]+\/results$/, "/races/{raceId}/results")
     .replace(/\/races\/[^/]+\/results\/recalc$/, "/races/{raceId}/results/recalc")

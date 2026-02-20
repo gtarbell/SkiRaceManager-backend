@@ -126,6 +126,39 @@ async function putExcludedBibs(raceId: string, excludedBibs: number[]) {
   }));
 }
 
+async function updateEntryBib(raceId: string, racerId: string, newBib: number): Promise<StartListEntry> {
+  const { entries, excludedBibs } = await getStartListData(raceId);
+  const target = entries.find(entry => entry.racerId === racerId);
+  if (!target) throw new Error("Racer not found in start list");
+  if (newBib <= 0 || !Number.isInteger(newBib)) throw new Error("Bib must be a positive integer");
+  if (excludedBibs.includes(newBib)) throw new Error("Bib is excluded for this race");
+  const existingBib = entries.find(entry => entry.bib === newBib);
+  if (existingBib && existingBib.racerId !== racerId) throw new Error("Bib is already assigned");
+  if (target.bib === newBib) return target;
+
+  await ddb.send(new DeleteCommand({
+    TableName: STARTLISTS,
+    Key: { raceId, bib: target.bib },
+  }));
+
+  const updated: StartListEntry = { ...target, bib: newBib };
+  await ddb.send(new PutCommand({
+    TableName: STARTLISTS,
+    Item: {
+      raceId,
+      bib: newBib,
+      racerId: updated.racerId,
+      racerName: updated.racerName,
+      teamId: updated.teamId,
+      teamName: updated.teamName,
+      gender: updated.gender,
+      class: updated.class,
+    },
+  }));
+
+  return updated;
+}
+
 function nextAvailableBib(start: number, exclude: Set<number>, count: number): number[] {
   const res: number[] = [];
   let num = start;
@@ -151,6 +184,25 @@ export const startlistRouter = async (e: APIGatewayProxyEventV2): Promise<APIGat
     const excluded = Array.isArray(body.excludedBibs) ? body.excludedBibs.filter((n: any) => Number.isFinite(n)) : [];
     await putExcludedBibs(raceId, excluded);
     return { statusCode: 200, body: JSON.stringify(excluded) };
+  }
+
+  if (method === "PATCH" && e.rawPath.endsWith("/bib")) {
+    const body = JSON.parse(e.body || "{}");
+    const racerId = String(body.racerId || "").trim();
+    const bib = Number(body.bib);
+    if (!racerId) return { statusCode: 400, body: JSON.stringify({ error: "racerId required" }) };
+    if (!Number.isInteger(bib) || bib <= 0) {
+      return { statusCode: 400, body: JSON.stringify({ error: "bib must be a positive integer" }) };
+    }
+    try {
+      const updated = await updateEntryBib(raceId, racerId, bib);
+      return { statusCode: 200, body: JSON.stringify(updated) };
+    } catch (err: any) {
+      const msg = err?.message || "Failed to update bib";
+      if (msg.includes("not found")) return { statusCode: 404, body: JSON.stringify({ error: msg }) };
+      if (msg.includes("already assigned")) return { statusCode: 409, body: JSON.stringify({ error: msg }) };
+      return { statusCode: 400, body: JSON.stringify({ error: msg }) };
+    }
   }
 
   if (method === "GET") {

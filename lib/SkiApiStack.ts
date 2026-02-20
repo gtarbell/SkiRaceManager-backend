@@ -247,6 +247,7 @@ api.addRoutes(
     api.addRoutes({ path: "/races/{raceId}/start-list", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/start-list/excluded", integration, methods: [HttpMethod.POST] });
+    api.addRoutes({ path: "/races/{raceId}/start-list/bib", integration, methods: [HttpMethod.PATCH] });
     api.addRoutes({ path: "/races/{raceId}/results", integration, methods: [HttpMethod.GET] });
     api.addRoutes({ path: "/races/{raceId}/results", integration, methods: [HttpMethod.POST] });
     api.addRoutes({ path: "/races/{raceId}/results/recalc", integration, methods: [HttpMethod.POST] });
