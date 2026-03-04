@@ -159,6 +159,64 @@ async function updateEntryBib(raceId: string, racerId: string, newBib: number): 
   return updated;
 }
 
+async function resolveRosteredRacer(raceId: string, racerId: string): Promise<Omit<StartListEntry, "bib">> {
+  const teamsScan = await ddb.send(new ScanCommand({ TableName: TEAMS }));
+  const teams = teamsScan.Items ?? [];
+  for (const team of teams) {
+    const teamId = String(team.teamId);
+    const roster = await getRoster(raceId, teamId);
+    const rosterEntry = (roster ?? []).find((item: any) => item.racerId === racerId);
+    if (!rosterEntry) continue;
+
+    if (rosterEntry.class === "DNS" || rosterEntry.class === "DNS - Did Not Start") {
+      throw new Error("DNS entries cannot be added to the start list");
+    }
+
+    const racerRes = await ddb.send(new GetCommand({
+      TableName: RACERS,
+      Key: { racerId },
+    }));
+    const racer = racerRes.Item;
+    if (!racer) throw new Error("Racer not found");
+
+    return {
+      raceId,
+      racerId,
+      racerName: String(racer.name ?? racerId),
+      teamId,
+      teamName: String(team.name ?? teamId),
+      gender: rosterEntry.gender as Gender,
+      class: rosterEntry.class as RacerClass,
+    };
+  }
+  throw new Error("Racer is not on this race roster");
+}
+
+async function addEntryToStartList(raceId: string, racerId: string, bib: number): Promise<StartListEntry> {
+  if (bib <= 0 || !Number.isInteger(bib)) throw new Error("Bib must be a positive integer");
+  const { entries, excludedBibs } = await getStartListData(raceId);
+  if (entries.some(entry => entry.racerId === racerId)) throw new Error("Racer is already in the start list");
+  if (excludedBibs.includes(bib)) throw new Error("Bib is excluded for this race");
+  if (entries.some(entry => entry.bib === bib)) throw new Error("Bib is already assigned");
+
+  const rostered = await resolveRosteredRacer(raceId, racerId);
+  const created: StartListEntry = { ...rostered, bib };
+  await ddb.send(new PutCommand({
+    TableName: STARTLISTS,
+    Item: {
+      raceId,
+      bib,
+      racerId: created.racerId,
+      racerName: created.racerName,
+      teamId: created.teamId,
+      teamName: created.teamName,
+      gender: created.gender,
+      class: created.class,
+    },
+  }));
+  return created;
+}
+
 function nextAvailableBib(start: number, exclude: Set<number>, count: number): number[] {
   const res: number[] = [];
   let num = start;
@@ -184,6 +242,27 @@ export const startlistRouter = async (e: APIGatewayProxyEventV2): Promise<APIGat
     const excluded = Array.isArray(body.excludedBibs) ? body.excludedBibs.filter((n: any) => Number.isFinite(n)) : [];
     await putExcludedBibs(raceId, excluded);
     return { statusCode: 200, body: JSON.stringify(excluded) };
+  }
+
+  if (method === "POST" && e.rawPath.endsWith("/entry")) {
+    const body = JSON.parse(e.body || "{}");
+    const racerId = String(body.racerId || "").trim();
+    const bib = Number(body.bib);
+    if (!racerId) return { statusCode: 400, body: JSON.stringify({ error: "racerId required" }) };
+    if (!Number.isInteger(bib) || bib <= 0) {
+      return { statusCode: 400, body: JSON.stringify({ error: "bib must be a positive integer" }) };
+    }
+    try {
+      const created = await addEntryToStartList(raceId, racerId, bib);
+      return { statusCode: 200, body: JSON.stringify(created) };
+    } catch (err: any) {
+      const msg = err?.message || "Failed to add start list entry";
+      if (msg.includes("not found") || msg.includes("not on this race roster")) {
+        return { statusCode: 404, body: JSON.stringify({ error: msg }) };
+      }
+      if (msg.includes("already")) return { statusCode: 409, body: JSON.stringify({ error: msg }) };
+      return { statusCode: 400, body: JSON.stringify({ error: msg }) };
+    }
   }
 
   if (method === "PATCH" && e.rawPath.endsWith("/bib")) {
